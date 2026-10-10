@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1D2B24">
+<title>Maqueta digital del río · Alerta temprana por nivel</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23344E41'/%3E%3Cpath d='M6 12c2.6-2 5.2-2 7.8 0s5.2 2 7.8 0 2.9-1.7 4.4-1.5M6 20c2.6-2 5.2-2 7.8 0s5.2 2 7.8 0 2.9-1.7 4.4-1.5' fill='none' stroke='%23A3B18A' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ===== BARRA SUPERIOR ===== -->
+<header class="card barra" id="barra">
+  <div class="barra-marca">
+    <span class="chip-ico"><i data-lucide="waves"></i></span>
+    <h1>Maqueta digital del río</h1>
+    <span class="chip" id="chipDemo" hidden>Demo</span>
+  </div>
+  <div class="barra-acciones">
+    <div class="nodo" id="nodo" data-estado="conectando" role="status">
+      <span class="nodo-punto" aria-hidden="true"></span>
+      <i data-lucide="wifi-off" class="nodo-sin"></i>
+      <span id="nodoTxt">Conectando…</span>
+    </div>
+    <button class="btn" id="btnComponentes" type="button" aria-pressed="false" title="Mostrar los componentes y sus pines sobre la maqueta">
+      <i data-lucide="cpu"></i><span>Componentes</span>
+    </button>
+    <button class="btn" id="btnVista" type="button" title="Restablecer la cámara">
+      <i data-lucide="rotate-ccw"></i><span>Vista</span>
+    </button>
+    <button class="btn" id="btnPaneles" type="button" aria-pressed="false" title="Ocultar o mostrar los paneles">
+      <i data-lucide="eye-off" class="ico-off"></i><i data-lucide="eye" class="ico-on"></i><span id="btnPanelesTxt">Ocultar paneles</span>
+    </button>
+  </div>
+</header>
+
+<div class="franja" id="franja" role="alert" hidden>
+  <i data-lucide="radio"></i><span id="franjaTxt"></span>
+</div>
+
+<!-- ===== ESCENA 3D (fondo completo en escritorio; bloque superior en tablet y móvil) ===== -->
+<div id="escena">
+  <canvas id="lienzo" aria-label="Maqueta 3D del río: arrastra para girar, rueda para acercar"></canvas>
+  <div id="etiquetas"></div>
+  <p class="escena-aviso">No se pudo iniciar la vista 3D en este navegador. El tablero sigue funcionando.</p>
+</div>
+
+<!-- ===== TABLERO ===== -->
+<main id="tablero">
+
+  <!-- LECTURAS -->
+  <section class="grupo g-lecturas" aria-labelledby="titLecturas">
+    <h2 class="grupo-tit" id="titLecturas">Lecturas</h2>
+
+    <article class="card dato" id="cardNivel">
+      <header class="card-cab">
+        <span class="chip-ico"><i data-lucide="waves"></i></span>
+        <h3>Nivel del río</h3>
+        <span class="chip" data-chip hidden></span>
+      </header>
+      <div class="nivel">
+        <svg class="cilindro" viewBox="0 0 96 236" aria-hidden="true">
+          <defs>
+            <linearGradient id="gradLiquido" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0" style="stop-color:var(--v-nivel-a)"/>
+              <stop offset="1" style="stop-color:var(--v-nivel-b)"/>
+            </linearGradient>
+            <clipPath id="recorteTubo"><path d="M30 14A30 8 0 0 1 90 14V222A30 8 0 0 1 30 222Z"/></clipPath>
+          </defs>
+          <path class="tubo-fondo" d="M30 14A30 8 0 0 1 90 14V222A30 8 0 0 1 30 222Z"/>
+          <g clip-path="url(#recorteTubo)">
+            <g id="liquido" class="liquido">
+              <rect id="liqCuerpo" x="30" y="222" width="60" height="0" fill="url(#gradLiquido)"/>
+              <ellipse class="liq-base" cx="60" cy="222" rx="30" ry="8"/>
+              <g class="onda"><ellipse id="liqSup" class="liq-sup" cx="60" cy="222" rx="30" ry="8"/></g>
+            </g>
+          </g>
+          <line class="umbral mid" x1="30" x2="90" y1="144" y2="144"/>
+          <text class="umbral-txt" x="86" y="140">Medio</text>
+          <line class="umbral high" x1="30" x2="90" y1="92" y2="92"/>
+          <text class="umbral-txt" x="86" y="88">Alto</text>
+          <path class="tubo-borde" d="M30 14A30 8 0 0 1 90 14V222A30 8 0 0 1 30 222Z"/>
+          <ellipse class="tubo-boca" cx="60" cy="14" rx="30" ry="8"/>
+          <rect class="tubo-reflejo" x="36" y="26" width="3" height="186" rx="1.5"/>
+          <text class="esc" x="23" y="226">0</text>
+          <text class="esc" x="23" y="174">25</text>
+          <text class="esc" x="23" y="122">50</text>
+          <text class="esc" x="23" y="70">75</text>
+          <text class="esc" x="23" y="18">100</text>
+        </svg>
+        <div class="nivel-info">
+          <div class="valor-xl"><span id="vNivel">–</span><small>%</small></div>
+          <div class="variacion" id="dNivel">&nbsp;</div>
+        </div>
+      </div>
+    </article>
+
+    <article class="card dato" id="cardClima">
+      <header class="card-cab">
+        <span class="chip-ico"><i data-lucide="cloud-rain"></i></span>
+        <h3>Lluvia y humedad</h3>
+        <span class="chip" data-chip hidden></span>
+      </header>
+      <div class="anillos">
+        <div class="anillo anillo-lluvia">
+          <div class="anillo-svg">
+            <svg viewBox="0 0 112 112" aria-hidden="true">
+              <circle class="pista" cx="56" cy="56" r="46"/>
+              <circle class="prog" id="rLluvia" cx="56" cy="56" r="46"/>
+            </svg>
+            <div class="anillo-centro"><span id="vLluvia">–</span><small>%</small></div>
+          </div>
+          <div class="anillo-nom">Lluvia</div>
+          <div class="variacion" id="dLluvia">&nbsp;</div>
+        </div>
+        <div class="sep-v"></div>
+        <div class="anillo anillo-humedad">
+          <div class="anillo-svg">
+            <svg viewBox="0 0 112 112" aria-hidden="true">
+              <circle class="pista" cx="56" cy="56" r="46"/>
+              <circle class="prog" id="rHumedad" cx="56" cy="56" r="46"/>
+            </svg>
+            <div class="anillo-centro"><span id="vHumedad">–</span><small>%</small></div>
+          </div>
+          <div class="anillo-nom">Humedad del suelo</div>
+          <div class="variacion" id="dHumedad">&nbsp;</div>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ZONA LIBRE: aquí se ve la maqueta; la escena se encuadra en este hueco -->
+  <div id="zonaLibre" aria-hidden="true"></div>
+
+  <div class="col-der">
+
+    <!-- ESTADO: lo que el nodo confirma -->
+    <section class="grupo g-estado" aria-labelledby="titEstado">
+      <h2 class="grupo-tit" id="titEstado">Estado</h2>
+      <article class="card dato" id="cardEstado">
+        <span class="chip chip-esquina" data-chip hidden></span>
+        <div class="riesgo" id="riesgo" data-nivel="sin">
+          <div class="riesgo-cab"><i data-lucide="shield-alert"></i><span>Riesgo</span></div>
+          <div class="riesgo-valor" id="riesgoTxt">—</div>
+          <div class="riesgo-seg" aria-hidden="true">
+            <div class="seg" data-seg="bajo"><i></i><span>Bajo</span></div>
+            <div class="seg" data-seg="medio"><i></i><span>Medio</span></div>
+            <div class="seg" data-seg="alto"><i></i><span>Alto</span></div>
+          </div>
+          <p class="riesgo-nota" id="riesgoNota" hidden>Calculado con valores simulados</p>
+        </div>
+
+        <div class="fila">
+          <span class="fila-nom">Modo</span>
+          <span class="fila-val">
+            <span id="eModoTxt">—</span>
+            <span class="switch compacto" id="eModo" data-on="false" aria-hidden="true">
+              <span class="switch-track"></span>
+              <span class="switch-knob"><i data-lucide="cpu" class="ico-off"></i><i data-lucide="hand" class="ico-on"></i></span>
+            </span>
+          </span>
+        </div>
+        <div class="fila">
+          <span class="fila-nom">Compuerta</span>
+          <span class="fila-val" id="eCompuerta" data-abierta="false">
+            <span id="eCompuertaTxt">—</span>
+            <svg class="ico-compuerta" viewBox="0 0 28 24" aria-hidden="true">
+              <path d="M3 21h22"/>
+              <path class="hoja" d="M9 6.5V19.5"/>
+              <circle cx="9" cy="5" r="1.6"/>
+            </svg>
+          </span>
+        </div>
+        <div class="fila">
+          <span class="fila-nom">Buzzer</span>
+          <span class="fila-val buzzer" id="eBuzzer" data-estado="sin">
+            <span id="eBuzzerTxt">—</span>
+            <span class="buzzer-ico">
+              <i data-lucide="bell-off" class="b-apagado"></i>
+              <i data-lucide="bell" class="b-intermitente"></i>
+              <i data-lucide="bell-ring" class="b-sonando"></i>
+            </span>
+          </span>
+        </div>
+      </article>
+    </section>
+
+    <!-- CONTROL: lo que se le ordena al nodo -->
+    <section class="grupo g-control" aria-labelledby="titControl">
+      <h2 class="grupo-tit" id="titControl">Control</h2>
+      <article class="card" id="cardControl">
+        <div class="ctl">
+          <span class="ctl-nom"><i data-lucide="sliders-horizontal"></i>Modo</span>
+          <button class="switch" id="swModo" type="button" role="switch" aria-checked="false" aria-label="Modo manual" disabled>
+            <span class="switch-track">
+              <span class="switch-txt off">Automático</span>
+              <span class="switch-txt on">Manual</span>
+            </span>
+            <span class="switch-knob"><i data-lucide="cpu" class="ico-off"></i><i data-lucide="hand" class="ico-on"></i><span class="aro"></span></span>
+          </button>
+        </div>
+
+        <hr>
+
+        <div class="slider bloqueado" id="slNivel" data-clave="nivel">
+          <div class="slider-cab">
+            <label for="inNivel"><i data-lucide="waves"></i>Nivel<i data-lucide="lock" class="candado"></i></label>
+            <span class="slider-val"><output id="outNivel" for="inNivel">–</output><small>%</small></span>
+          </div>
+          <div class="slider-riel">
+            <input type="range" id="inNivel" min="0" max="100" step="1" value="0" disabled>
+            <div class="riel"><div class="relleno"></div></div>
+            <i class="marca mid" style="--m:37.5"></i><i class="marca high" style="--m:62.5"></i>
+            <div class="perilla"><span class="aro"></span></div>
+            <div class="burbuja"></div>
+          </div>
+          <div class="slider-esc"><span>0</span><span>50</span><span>100</span></div>
+        </div>
+
+        <div class="slider bloqueado" id="slLluvia" data-clave="lluvia">
+          <div class="slider-cab">
+            <label for="inLluvia"><i data-lucide="cloud-rain"></i>Lluvia<i data-lucide="lock" class="candado"></i></label>
+            <span class="slider-val"><output id="outLluvia" for="inLluvia">–</output><small>%</small></span>
+          </div>
+          <div class="slider-riel">
+            <input type="range" id="inLluvia" min="0" max="100" step="1" value="0" disabled>
+            <div class="riel"><div class="relleno"></div></div>
+            <i class="marca mid" style="--m:60"></i><i class="marca high" style="--m:70"></i>
+            <div class="perilla"><span class="aro"></span></div>
+            <div class="burbuja"></div>
+          </div>
+          <div class="slider-esc"><span>0</span><span>50</span><span>100</span></div>
+        </div>
+
+        <div class="slider bloqueado" id="slHumedad" data-clave="humedad">
+          <div class="slider-cab">
+            <label for="inHumedad"><i data-lucide="sprout"></i>Humedad<i data-lucide="lock" class="candado"></i></label>
+            <span class="slider-val"><output id="outHumedad" for="inHumedad">–</output><small>%</small></span>
+          </div>
+          <div class="slider-riel">
+            <input type="range" id="inHumedad" min="0" max="100" step="1" value="0" disabled>
+            <div class="riel"><div class="relleno"></div></div>
+            <i class="marca mid" style="--m:80"></i>
+            <div class="perilla"><span class="aro"></span></div>
+            <div class="burbuja"></div>
+          </div>
+          <div class="slider-esc"><span>0</span><span>50</span><span>100</span></div>
+        </div>
+
+        <hr>
+
+        <div class="ctl bloqueado" id="ctlCompuerta">
+          <span class="ctl-nom"><i data-lucide="door-closed"></i>Compuerta<i data-lucide="lock" class="candado"></i></span>
+          <button class="switch" id="swCompuerta" type="button" role="switch" aria-checked="false" aria-label="Compuerta abierta" disabled>
+            <span class="switch-track">
+              <span class="switch-txt off">Cerrada</span>
+              <span class="switch-txt on">Abierta</span>
+            </span>
+            <span class="switch-knob"><i data-lucide="door-closed" class="ico-off"></i><i data-lucide="door-open" class="ico-on"></i><span class="aro"></span></span>
+          </button>
+        </div>
+      </article>
+    </section>
+  </div>
+
+  <!-- HISTORIAL -->
+  <section class="grupo g-historial" aria-label="Historial">
+    <article class="card" id="cardHistorial">
+      <header class="card-cab">
+        <span class="chip-ico"><i data-lucide="chart-spline"></i></span>
+        <h3>Historial</h3>
+        <div class="segmentado" role="group" aria-label="Rango del historial">
+          <button type="button" data-rango="5" aria-pressed="true">5 min</button>
+          <button type="button" data-rango="15" aria-pressed="false">15 min</button>
+          <button type="button" data-rango="60" aria-pressed="false">1 h</button>
+        </div>
+        <button class="btn-ico" id="btnPlegar" type="button" aria-expanded="true" aria-controls="histCuerpo" aria-label="Plegar el historial">
+          <i data-lucide="chevron-down"></i>
+        </button>
+      </header>
+      <div class="hist-cuerpo" id="histCuerpo">
+        <div class="graf">
+          <div class="graf-cab"><span>Nivel del río</span></div>
+          <div class="graf-lienzo"><canvas id="gNivel" role="img" aria-label="Historial del nivel del río en porcentaje"></canvas></div>
+        </div>
+        <div class="sep-v"></div>
+        <div class="graf">
+          <div class="graf-cab">
+            <span>Lluvia y humedad</span>
+            <span class="leyenda"><i class="l-lluvia"></i>Lluvia<i class="l-humedad"></i>Humedad</span>
+          </div>
+          <div class="graf-lienzo"><canvas id="gClima" role="img" aria-label="Historial de lluvia y humedad del suelo en porcentaje"></canvas></div>
+        </div>
+      </div>
+    </article>
+  </section>
+</main>
+
+<div id="aviso" role="status" aria-live="polite"></div>
+
+<!-- ===== LIBRERÍAS: locales en /vendor, con respaldo en CDN ===== -->
+<script src="/vendor/three/build/three.min.js"></script>
+<script>window.THREE||document.write('<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/scr'+'ipt>');</script>
+<script src="/vendor/three/examples/js/controls/OrbitControls.js"></script>
+<script>window.THREE&&!THREE.OrbitControls&&document.write('<scr'+'ipt src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/js/controls/OrbitControls.js"><\/scr'+'ipt>');</script>
+<script src="/vendor/chartjs/chart.umd.min.js"></script>
+<script>window.Chart||document.write('<scr'+'ipt src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"><\/scr'+'ipt>');</script>
+<script src="/vendor/mqtt/mqtt.min.js"></script>
+<script>window.mqtt||document.write('<scr'+'ipt src="https://unpkg.com/mqtt@5.16.0/dist/mqtt.min.js"><\/scr'+'ipt>');</script>
+<script src="/vendor/lucide/lucide.min.js"></script>
+<script>window.lucide||document.write('<scr'+'ipt src="https://unpkg.com/lucide@1.55.0/dist/umd/lucide.min.js"><\/scr'+'ipt>');</script>
+
+<script src="escena.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
