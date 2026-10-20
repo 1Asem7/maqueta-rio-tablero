@@ -20,12 +20,20 @@
     <h1>Maqueta digital del río</h1>
     <span class="chip" id="chipDemo" hidden>Demo</span>
   </div>
-  <div class="barra-acciones">
-    <div class="nodo" id="nodo" data-estado="conectando" role="status">
-      <span class="nodo-punto" aria-hidden="true"></span>
-      <i data-lucide="wifi-off" class="nodo-sin"></i>
-      <span id="nodoTxt">Conectando…</span>
+  <!-- Conexión: el broker y el nodo por separado -->
+  <div class="estados">
+    <div class="pil" id="pilBroker" data-estado="conectando" role="status">
+      <span class="pil-punto" aria-hidden="true"></span>
+      <span class="pil-nom">Broker</span>
+      <span class="pil-txt" id="brokerTxt">conectando…</span>
     </div>
+    <div class="pil" id="pilNodo" data-estado="esperando">
+      <span class="pil-punto" aria-hidden="true"></span>
+      <span class="pil-nom">Nodo</span>
+      <span class="pil-txt" id="nodoTxt">esperando datos…</span>
+    </div>
+  </div>
+  <div class="barra-acciones">
     <button class="btn" id="btnComponentes" type="button" aria-pressed="false" title="Mostrar los componentes y sus pines sobre la maqueta">
       <i data-lucide="cpu"></i><span>Componentes</span>
     </button>

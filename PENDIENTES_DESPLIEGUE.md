@@ -87,7 +87,7 @@ En PowerShell, dentro de la carpeta del proyecto:
 $env:MQTT_USUARIO = "maquetaweb"; $env:MQTT_CLAVE = "la-clave"; npm start
 ```
 
-Abrir `http://localhost:3000` (sin `?demo=1`). Con el nodo encendido debe decir "Nodo online" y mostrar las lecturas reales.
+Abrir `http://localhost:3000` (sin `?demo=1`). Con el nodo encendido la barra debe decir "Broker conectado" y "Nodo online · <hora>", y mostrar las lecturas reales.
 
 ### Paso 3. Subir el proyecto a un repositorio
 
@@ -151,7 +151,7 @@ Esto no se puede saber desde la PC:
 ## 7. Cómo saber que quedó bien
 
 1. `https://<subdominio>/api/salud` responde `{"estado":"ok",...}`.
-2. La barra superior de la página dice "Nodo online · hace 1 s".
+2. La barra superior de la página dice "Broker conectado" y "Nodo online · <hora de la última lectura>".
 3. Al activar el modo manual, el switch gira un instante y la tarjeta Estado cambia a "Manual".
 4. El switch de modo manual en Node-RED se mueve solo, y al revés: un cambio en Node-RED mueve los controles de la página.
 5. Al terminar las pruebas, dejar el modo en automático para que el control retenido quede en `{"modo":"auto"}`.
@@ -160,8 +160,8 @@ Esto no se puede saber desde la PC:
 
 | Lo que se ve | Causa probable |
 |---|---|
-| "Sin conexión al broker" | Usuario o clave incorrectos, o las variables no llegaron al proceso. Revisar qué devuelve `/api/config`. |
-| "Nodo offline" o "Esperando datos del nodo" mientras Node-RED sí recibe datos | Al usuario le falta permiso de lectura en `datos` o `estado`. |
+| "Broker sin conexión" | La franja roja dice el motivo (clave rechazada, faltan `MQTT_USUARIO`/`MQTT_CLAVE`, `/api/config` no respondió, el broker no responde o el equipo no tiene red). Los detalles están en la consola del navegador, con el prefijo `[MQTT]`. |
+| "Nodo offline" o "Nodo esperando datos…" mientras Node-RED sí recibe datos | Al usuario le falta permiso de lectura en `datos` o `estado`. Si el broker niega la suscripción, la franja y la consola lo dicen. |
 | El switch queda pendiente y aparece "El nodo no confirmó el cambio" | Falta permiso de escritura en `control`. Mosquitto descarta la publicación sin avisar. |
 | El subdominio muestra la maqueta anterior | El túnel apunta al puerto de `maqueta-rio-v2`. Comparar la respuesta de `/api/salud`. |
 

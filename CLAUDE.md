@@ -62,11 +62,11 @@ They come from the firmware (PlatformIO project `Practica_x.2`) and the Node-RED
 
 1. **`CONFIG`**: topics, broker, thresholds in %, timeouts, history settings.
 2. **State**: `nodo` is what the node confirms (data topic); `orden` is what was commanded (control topic, whoever published it); `pendientes` holds commands awaiting confirmation. The shared keys are `manual`, `nivel`, `lluvia`, `humedad`, `compuerta`.
-3. **Incoming messages**: `alLlegar` routes to `recibirDatos`, `recibirEstado`, `recibirControl`. Field parsing is tolerant (`leerRiesgo`, `leerBuzzer`, `leerCompuerta`).
+3. **Incoming messages**: `alLlegar(topic, texto, retenido)` routes to `recibirDatos`, `recibirEstado`, `recibirControl`. Field parsing is tolerant (`leerRiesgo`, `leerBuzzer`, `leerCompuerta`). A retained `datos` message (sent by the broker on subscribe) is painted and enters the history, but only a live one sets `nodo.tVivo`, the proof that the node is publishing.
 4. **Commands and confirmation**: no control assumes success. `ordenar()` marks the key pending and publishes; `revisarPendientes()` clears it when the node's data confirms; after `CONFIG.msConfirmacion` (3 s) `vencer()` reverts to the node's state, warns, and republishes the node's real state so the stale retained command can't flip the node into manual later. `valorMostrado()` decides what each control shows: the command while pending, otherwise the node. A command published by another client (Node-RED) moves the controls the same way.
-5. **Connection**: `pintarConexion()` derives online / waiting / offline / no broker. Offline comes from the `estado` topic (LWT) or from `CONFIG.msSinDatos` without data. Offline and no-broker both disable the controls and desaturate the data cards.
+5. **Connection**: the top bar has two pills. Broker (`enlace.broker`: connecting / connected / no connection) comes from the client events. Node comes from `estadoNodo()`: waiting / online / offline, or "sin verificar" while there is no broker. Online needs a live reading within `msVigilancia` (3 × `CONFIG.msPublicacion`). Offline comes from that watchdog or from the `estado` topic (LWT); the watchdog never closes the broker connection. `pintarConexion()` paints both pills (with the time of the last reading), the warning strip (`motivoBroker()` explains why there is no broker) and the card chips. Offline and no-broker both disable the controls and desaturate the data cards.
 6. **Readings, status, control, history**: `animarLectura` (600 ms count-up), `pintarEstado`, `pintarControl`, Chart.js charts fed from the in-memory `hist` buffer (reduced to ≤ 300 points per series; the last hour is also kept in `localStorage`, inside `try/catch`).
-7. **Transport**: `conectarMqtt()` (real) or `iniciarDemo()` (fake node). Both feed `alLlegar` and set `transporte.publicar`, so the demo exercises the same code paths.
+7. **Transport**: `leerConfig().then(conectarMqtt)` (real, on page load) or `iniciarDemo()` (fake node). Both feed `alLlegar` and set `transporte.publicar`, so the demo exercises the same code paths. The real client resubscribes on every `connect` (`resubscribe: false`, clean session), logs every event with the `[MQTT]` prefix, and sets `transporte.reconectar` (forced on `visibilitychange` and the browser's `online`) and `transporte.vigilar` (run every second: forces a retry if none started two periods after a `close`).
 
 ### `escena.js` layout
 
@@ -86,6 +86,7 @@ Labels, guide lines, dimensions, flow arrows and the ultrasonic cone are hidden 
 
 ### Gotchas
 
+- mqtt.js 5 stops reconnecting for good after a CONNACK refusal (bad user/password, not authorized) unless `reconnectOnConnackError: true`. Keep that option. Browser WebSocket errors carry no `code`, so mqtt.js swallows them: a failed connection shows up only as `close`.
 - The firmware lives outside this repo, at `OneDrive/Documentos/PlatformIO/Projects/Practica_x.2` (it has its own CLAUDE.md). Read `src/main.cpp` to confirm any field or timing; never open or print `include/secretos.h`.
 - Thresholds are typed in several places. If the firmware's change, update `CONFIG.umbrales` in `app.js`, the slider marks (`--m`) and the cylinder's threshold lines in `index.html`, and `UMBRALES` in `escena.js` (staff-gauge marks).
 - Palette colors are duplicated on purpose: tokens and `--rgb-*` triplets in `styles.css` (Chart.js reads them from there), and `CONFIG.colores.fondo/hueso/haloMedio/haloAlto` in `escena.js`.
