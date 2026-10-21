@@ -26,12 +26,11 @@ To work without the node powered on, open `http://localhost:3000/?demo=1`: a fak
 
 The app runs as a single Node process with no build step: on the server, `npm ci --omit=dev` and then `npm start`. `node_modules/` is not committed, so the install step is required (the libraries are served out of it). The host's reverse proxy or platform should forward the subdomain to `PORT`; `GET /api/salud` is the health check. Files in `public/` are sent with `Cache-Control: no-cache` so a new deploy shows up on reload; `/vendor/*` is cached for 30 days because the library versions are pinned in `package.json`.
 
-The page's broker connection comes from env vars, served at `GET /api/config`, so credentials stay out of the repo:
+The production site (`maquetaiot.eparedes.dev`) is a **static site on HubDeploy**: `server.js` does not run, `/api/config` does not exist and env vars are not used. So the broker user and password live in `CONFIG.mqtt` in `public/app.js` (user `maquetaweb`; the password replaces the placeholder `PEGAR_AQUI_LA_CLAVE`). The repo is public, so that password is public: this was decided on purpose for the school expo. The Mosquitto user `maquetaweb` must have exactly this ACL: read `datos` and `estado`, readwrite `control`. Never put the `esp32` or `nodered` credentials in the repo.
 
-- `MQTT_URL` (default in `app.js`: `wss://mqtt.eparedes.dev/mqtt`, the same listener the ESP32 uses)
-- `MQTT_USUARIO`, `MQTT_CLAVE`: a Mosquitto user created only for this page.
+With `npm start` (local or a Node host) `GET /api/config` can still override the URL, user and password through `MQTT_URL`, `MQTT_USUARIO`, `MQTT_CLAVE`; if it is missing or answers with something that is not JSON, `CONFIG.mqtt` is used.
 
-Anyone who can open the page can read those credentials and move the gate. So that Mosquitto user must have an ACL (read `datos`, `estado` and `control`; write only `control`) and the subdomain should sit behind Cloudflare Access. Never put the `esp32` or `nodered` passwords here.
+`CONFIG.controlHabilitado` (default `true`) lets visitors switch to manual mode and move the gate. Set it to `false` for read-only: the controls are hidden, a "Solo lectura" chip shows in the bar and the page never publishes (`ordenar()` and `enviarControl()` return early).
 
 ## Architecture
 
@@ -66,7 +65,7 @@ They come from the firmware (PlatformIO project `Practica_x.2`) and the Node-RED
 4. **Commands and confirmation**: no control assumes success. `ordenar()` marks the key pending and publishes; `revisarPendientes()` clears it when the node's data confirms; after `CONFIG.msConfirmacion` (3 s) `vencer()` reverts to the node's state, warns, and republishes the node's real state so the stale retained command can't flip the node into manual later. `valorMostrado()` decides what each control shows: the command while pending, otherwise the node. A command published by another client (Node-RED) moves the controls the same way.
 5. **Connection**: the top bar has two pills. Broker (`enlace.broker`: connecting / connected / no connection) comes from the client events. Node comes from `estadoNodo()`: waiting / online / offline, or "sin verificar" while there is no broker. Online needs a live reading within `msVigilancia` (3 × `CONFIG.msPublicacion`). Offline comes from that watchdog or from the `estado` topic (LWT); the watchdog never closes the broker connection. `pintarConexion()` paints both pills (with the time of the last reading), the warning strip (`motivoBroker()` explains why there is no broker) and the card chips. Offline and no-broker both disable the controls and desaturate the data cards.
 6. **Readings, status, control, history**: `animarLectura` (600 ms count-up), `pintarEstado`, `pintarControl`, Chart.js charts fed from the in-memory `hist` buffer (reduced to ≤ 300 points per series; the last hour is also kept in `localStorage`, inside `try/catch`).
-7. **Transport**: `leerConfig().then(conectarMqtt)` (real, on page load) or `iniciarDemo()` (fake node). Both feed `alLlegar` and set `transporte.publicar`, so the demo exercises the same code paths. The real client resubscribes on every `connect` (`resubscribe: false`, clean session), logs every event with the `[MQTT]` prefix, and sets `transporte.reconectar` (forced on `visibilitychange` and the browser's `online`) and `transporte.vigilar` (run every second: forces a retry if none started two periods after a `close`).
+7. **Transport**: `leerConfig().then(conectarMqtt)` (real, on page load) or `iniciarDemo()` (fake node). Both feed `alLlegar` and set `transporte.publicar`, so the demo exercises the same code paths. The real client resubscribes on every `connect` (`resubscribe: false`, clean session), logs every event with the `[MQTT]` prefix, and sets `transporte.reconectar(motivo, renovar)` (forced on `visibilitychange`, `pageshow` from the back/forward cache and the browser's `online`; with `renovar` it also replaces a connection that looks alive, because a locked phone can kill the socket silently: hidden more than `CONFIG.msOcultaReconectar`, or network change) and `transporte.vigilar` (run every second: forces a retry if none started two periods after a `close`).
 
 ### `escena.js` layout
 
@@ -86,6 +85,8 @@ Labels, guide lines, dimensions, flow arrows and the ultrasonic cone are hidden 
 
 ### Gotchas
 
+- A range input commits its value with a `change` event that the browser fires AFTER `pointerup`. Never reset the slider's value inside a `pointerup` handler (the sliders silently stopped publishing because of that); the reset is deferred 80 ms.
+- ACL denials: mqtt.js reports a denied subscription only as an error (`Subscribe error: …`) without saying which topic, so each topic is subscribed separately. A denied publish is dropped silently by Mosquitto (no error), which is why a missing write permission on `control` shows up as "El nodo no confirmó el cambio".
 - mqtt.js 5 stops reconnecting for good after a CONNACK refusal (bad user/password, not authorized) unless `reconnectOnConnackError: true`. Keep that option. Browser WebSocket errors carry no `code`, so mqtt.js swallows them: a failed connection shows up only as `close`.
 - The firmware lives outside this repo, at `OneDrive/Documentos/PlatformIO/Projects/Practica_x.2` (it has its own CLAUDE.md). Read `src/main.cpp` to confirm any field or timing; never open or print `include/secretos.h`.
 - Thresholds are typed in several places. If the firmware's change, update `CONFIG.umbrales` in `app.js`, the slider marks (`--m`) and the cylinder's threshold lines in `index.html`, and `UMBRALES` in `escena.js` (staff-gauge marks).

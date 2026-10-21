@@ -91,7 +91,7 @@ body::before{
     linear-gradient(160deg, var(--bg-base), var(--bg-deep));
 }
 h1,h2,h3,p{margin:0}
-button{font:inherit;color:inherit}
+button{font:inherit;color:inherit;touch-action:manipulation}   /* sin espera ni zoom por doble toque */
 svg.lucide{width:16px;height:16px;flex:0 0 auto}
 :focus-visible{outline:2px solid var(--c-sage);outline-offset:3px}
 
@@ -249,6 +249,7 @@ body.con-franja{--alto-franja:38px}
 .g-lecturas::-webkit-scrollbar,.col-der::-webkit-scrollbar{display:none}
 .g-lecturas > *{flex:0 0 auto}
 body.sin-paneles #tablero{display:none}
+body.solo-lectura .g-control{display:none}      /* CONFIG.controlHabilitado = false */
 
 /* ===== LECTURAS ===== */
 .nivel{display:flex;align-items:center;gap:14px}
@@ -627,4 +628,13 @@ svg.candado{display:none;width:13px;height:13px;color:var(--text-3)}
   /* El broker sólo muestra su punto de color: el texto queda para lectores de
      pantalla y, si falla, la franja explica por qué */
   #brokerTxt{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+}
+
+/* ===== PANTALLAS TÁCTILES =====
+   El control real de los sliders se alarga 8 px arriba y abajo (44 px de zona
+   táctil) sin mover lo que se ve; los botones del historial se agrandan. */
+@media (pointer:coarse){
+  .slider-riel input{top:-8px;bottom:-8px;height:auto}
+  .segmentado button{padding:9px 8px}
+  .btn-ico{width:38px;height:38px}
 }

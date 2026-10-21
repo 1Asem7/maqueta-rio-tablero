@@ -15,6 +15,8 @@ Es una página web con la maqueta 3D del río y un tablero encima. Se conecta **
 - `wss://mqtt.eparedes.dev/mqtt` responde y rechaza la conexión sin credenciales con `Connection refused: Not authorized` (código 5). La ruta WebSocket funciona; solo falta el usuario.
 - `https://rio2.stardest.com` es hoy una aplicación Express (`/api/salud` devuelve `{"ok":true,"servicio":"maqueta-rio-v2",...}`) y es pública, sin Cloudflare Access. Es la maqueta anterior, la que solo simula.
 
+> **Actualización (20 oct):** en producción la página es un **sitio estático en HubDeploy** (no corre `server.js`, no hay `/api/config` ni variables de entorno). El usuario `maquetaweb` y su clave se escriben en `CONFIG.mqtt` de `public/app.js`; el repositorio es público y se acepta. `CONFIG.controlHabilitado = false` deja la página en solo lectura. Las secciones de variables de entorno de abajo aplican solo si se corre con `npm start`.
+
 ## 3. Cómo corre la aplicación nueva
 
 Un solo proceso Node, sin paso de compilación. Requiere Node 18 o superior.
