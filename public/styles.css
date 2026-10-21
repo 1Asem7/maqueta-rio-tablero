@@ -145,6 +145,7 @@ svg.lucide{width:16px;height:16px;flex:0 0 auto}
   border:1px solid rgba(var(--rgb-mid),.6);font-size:11px;color:var(--text-1);
 }
 .chip[data-tipo="ultima"]{border-color:rgba(var(--rgb-high),.4)}
+.chip[data-tipo="esperando"]{border-color:var(--glass-border);color:var(--text-2)}
 .sep-v{align-self:stretch;background:var(--hairline)}
 .variacion{font-size:12px;color:var(--text-2);white-space:nowrap}
 
@@ -161,23 +162,27 @@ svg.lucide{width:16px;height:16px;flex:0 0 auto}
 .barra-marca{display:flex;align-items:center;gap:10px;min-width:0}
 .barra h1{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .barra .chip{margin-left:0;border-color:var(--glass-border);color:var(--text-2)}
-.barra-acciones{display:flex;align-items:center;gap:8px;min-width:0}
+.barra-acciones{display:flex;align-items:center;gap:8px;flex:0 0 auto}
 
-.nodo{
-  display:flex;align-items:center;gap:8px;min-width:0;height:34px;padding:0 14px 0 12px;
+/* Píldoras de conexión: una para el broker y otra para el nodo */
+.estados{display:flex;align-items:center;gap:8px;flex:none;margin-left:auto}   /* si falta sitio, cede el título */
+.pil{
+  display:flex;align-items:center;gap:6px;flex:none;min-width:0;height:34px;padding:0 14px 0 12px;
   border-radius:var(--r-pill);background:var(--glass-fill-2);border:1px solid transparent;
   font-size:13px;white-space:nowrap;
 }
-.nodo > span:last-child{overflow:hidden;text-overflow:ellipsis}
-.nodo-punto{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--risk-mid)}
-.nodo-sin{display:none;color:var(--risk-high)}
-.nodo[data-estado="online"] .nodo-punto{background:var(--c-sage);animation:pulso-punto 2s ease-out infinite}
-.nodo[data-estado="conectando"] .nodo-punto,
-.nodo[data-estado="esperando"] .nodo-punto{animation:parpadeo 1s linear infinite}
-.nodo[data-estado="offline"]{border-color:rgba(var(--rgb-high),.4)}
-.nodo[data-estado="offline"] .nodo-punto,
-.nodo[data-estado="sin"] .nodo-punto{background:var(--risk-high)}
-.nodo[data-estado="sin"] .nodo-sin{display:block}
+.pil-punto{width:8px;height:8px;margin-right:2px;border-radius:50%;flex:0 0 auto;background:var(--risk-mid)}
+.pil-nom{color:var(--text-2)}
+.pil-txt{overflow:hidden;text-overflow:ellipsis}
+.pil[data-estado="conectando"] .pil-punto,
+.pil[data-estado="esperando"] .pil-punto{animation:parpadeo 1s linear infinite}
+.pil[data-estado="conectado"] .pil-punto{background:var(--c-sage)}
+.pil[data-estado="online"] .pil-punto{background:var(--c-sage);animation:pulso-punto 2s ease-out infinite}
+.pil[data-estado="sin"],
+.pil[data-estado="offline"]{border-color:rgba(var(--rgb-high),.4)}
+.pil[data-estado="sin"] .pil-punto,
+.pil[data-estado="offline"] .pil-punto{background:var(--risk-high)}
+.pil[data-estado="desconocido"] .pil-punto{background:var(--text-3)}
 
 .btn{
   display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 12px;flex:0 0 auto;
@@ -599,7 +604,12 @@ svg.candado{display:none;width:13px;height:13px;color:var(--text-3)}
 
 /* ===== MÓVIL (< 768 px): una columna ===== */
 @media (max-width:767px){
-  .barra{margin:8px 10px 0;top:8px}
+  /* La barra pasa a dos filas: marca y botones arriba, las dos píldoras abajo */
+  .barra{margin:8px 10px 0;top:8px;flex-wrap:wrap;row-gap:8px;height:auto;padding:8px 10px}
+  .barra-acciones{margin-left:auto}
+  .estados{order:1;flex:1 1 100%;min-width:0;margin-left:0;gap:6px}
+  .pil{height:30px;padding:0 10px;font-size:12px}
+  #pilNodo{flex:0 1 auto}
   .franja{margin:8px 10px 0}
   #escena{height:45vh;min-height:260px}
   #tablero{
@@ -609,10 +619,12 @@ svg.candado{display:none;width:13px;height:13px;color:var(--text-3)}
   .col-der{display:contents}
   .g-estado{grid-area:estado}
   .g-control{grid-area:control}
-  .nodo{font-size:12px;padding:0 10px}
   #cardHistorial .card-cab{flex-wrap:wrap}
 }
 @media (max-width:559px){
   .barra h1{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
   .barra-acciones{gap:6px}
+  /* El broker sólo muestra su punto de color: el texto queda para lectores de
+     pantalla y, si falla, la franja explica por qué */
+  #brokerTxt{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 }

@@ -31,8 +31,10 @@ const CONFIG = {
     url: 'wss://mqtt.eparedes.dev/mqtt',
     usuario: '',
     clave: '',
-    msReconexion: 3000,
-    keepalive: 30                            // menor a los 100 s de inactividad de Cloudflare
+    keepalive: 30,                           // s; Cloudflare corta el WebSocket tras ~100 s sin tráfico
+    msReconexion: 3000,                      // reconnectPeriod
+    msConexion: 10000,                       // connectTimeout
+    msConfig: 5000                           // espera máxima de /api/config
   },
 
   nivelMaxCm: 400,                           // 0–400 cm reales = 0–100 %
@@ -45,7 +47,8 @@ const CONFIG = {
     lluviaSaturacion: 60, lluviaAlta: 70, humedadSaturacion: 80
   },
 
-  msSinDatos: 15000,                         // sin mensajes del nodo en este tiempo = offline
+  msPublicacion: 1000,                       // el nodo publica en datos cada 1 s
+  publicacionesPerdidas: 3,                  // tantas seguidas sin llegar = nodo offline
   msConfirmacion: 3000,                      // espera a que el nodo confirme una orden
   msValor: 600,                              // animación de los números y rellenos
 
@@ -55,9 +58,7 @@ const CONFIG = {
     msVariacion: 5 * 60000,                  // ventana de "↑ 3 % · 5 min"
     clave: 'maqueta-rio.historial',          // localStorage: última hora
     msGuardar: 15000
-  },
-
-  demo: { msCiclo: 1000 }                    // ?demo=1 imita el ciclo del nodo
+  }
 };
 
 // ===== UTILIDADES =====
@@ -91,7 +92,8 @@ const RGB = { bone: token('--rgb-bone'), sage: token('--rgb-sage'), fern: token(
 const alfa = (tripleta, a) => 'rgba(' + tripleta + ',' + a + ')';
 
 const dom = {
-  nodo: $('nodo'), nodoTxt: $('nodoTxt'), franja: $('franja'), franjaTxt: $('franjaTxt'),
+  pilBroker: $('pilBroker'), brokerTxt: $('brokerTxt'), pilNodo: $('pilNodo'), nodoTxt: $('nodoTxt'),
+  franja: $('franja'), franjaTxt: $('franjaTxt'),
   chipDemo: $('chipDemo'), aviso: $('aviso'),
   vNivel: $('vNivel'), dNivel: $('dNivel'), liquido: $('liquido'), liqCuerpo: $('liqCuerpo'), liqSup: $('liqSup'),
   vLluvia: $('vLluvia'), dLluvia: $('dLluvia'), rLluvia: $('rLluvia'),
@@ -111,7 +113,10 @@ const dom = {
    Las claves compartidas son: manual, nivel, lluvia, humedad y compuerta.
    ========================================================================== */
 const nodo = {
-  hayDatos: false, tDatos: 0,
+  hayDatos: false,
+  tLectura: 0,                                  // cuándo llegó la última lectura (retenida o en vivo)
+  tVivo: 0,                                     // cuándo llegó la última EN VIVO; 0 = ninguna o el nodo cayó
+  retenida: false,                              // la última lectura es la que guardaba el broker
   nivel: null, lluvia: null, humedad: null,     // %
   riesgo: null,                                 // 'bajo' | 'medio' | 'alto'
   manual: false,
@@ -122,11 +127,21 @@ const orden = { manual: null, nivel: null, lluvia: null, humedad: null, compuert
 const enlace = {
   broker: 'conectando',                         // 'conectando' | 'conectado' | 'sin'
   tConexion: 0,
-  estadoNodo: null                              // 'online' | 'offline' | null (tópico de estado)
+  estadoNodo: null,                             // 'online' | 'offline' | null (tópico de estado)
+  url: CONFIG.mqtt.url,
+  config: 'ok',                                 // cómo llegó /api/config: 'ok' | 'sin-usuario' | 'fallo'
+  conUsuario: false,                            // la página tiene usuario para el broker
+  error: '',                                    // último error del cliente MQTT, en palabras
+  rechazo: false,                               // el broker rechazó el usuario o la clave
+  fatal: false,                                 // no se pudo ni crear el cliente: no hay reintentos
+  negados: []                                   // tópicos cuya suscripción negó el broker (ACL)
 };
 const pendientes = {};                          // clave → { valor, local, reloj }
-const transporte = { publicar: nada };          // lo define el MQTT real o el nodo demo
+// Lo define el MQTT real o el nodo demo
+const transporte = { publicar: nada, reconectar: nada, vigilar: nada };
 const LECTURAS = ['nivel', 'lluvia', 'humedad'];
+// Sin lecturas en vivo durante este tiempo, el nodo se marca offline
+const msVigilancia = CONFIG.msPublicacion * CONFIG.publicacionesPerdidas;
 
 // ===== LECTURA TOLERANTE DE LOS CAMPOS DEL NODO =====
 function leerRiesgo(v) {                        // el firmware manda 0, 1 o 2
@@ -157,13 +172,15 @@ const aPct = cm => limitar(cm / CONFIG.nivelMaxCm * 100, 0, 100);
 /* ============================================================================
    ===== MENSAJES QUE LLEGAN =====
    ========================================================================== */
-function alLlegar(topic, texto) {
-  if (topic === CONFIG.topics.datos) recibirDatos(leerJSON(texto));
+// retenido = el broker lo tenía guardado y lo manda al suscribirse; si no, llegó en vivo
+function alLlegar(topic, texto, retenido) {
+  if (retenido) console.info('[MQTT] mensaje retenido en ' + topic);
+  if (topic === CONFIG.topics.datos) recibirDatos(leerJSON(texto), retenido);
   else if (topic === CONFIG.topics.estado) recibirEstado(texto);
   else if (topic === CONFIG.topics.control) recibirControl(leerJSON(texto));
 }
 
-function recibirDatos(d) {
+function recibirDatos(d, retenido) {
   if (!d || typeof d !== 'object') return;
   const cm = num(d.nivel_cm), lluvia = num(d.lluvia_pct), humedad = num(d.humedad_pct);
   if (cm !== null) nodo.nivel = aPct(cm);
@@ -174,12 +191,17 @@ function recibirDatos(d) {
   nodo.manual = String(d.modo).toLowerCase() === 'manual';
   nodo.compuerta = leerCompuerta(d.compuerta);
   nodo.buzzer = leerBuzzer(d.buzzer);
+  const ahora = Date.now();
   nodo.hayDatos = true;
-  nodo.tDatos = Date.now();
+  nodo.tLectura = ahora;
+  nodo.retenida = !!retenido;
+  // Una lectura retenida puede ser vieja (es la última que guardó el broker):
+  // se pinta y entra al historial, pero sólo una en vivo prueba que el nodo publica.
+  if (!retenido) nodo.tVivo = ahora;
 
   revisarPendientes();
   sincronizarOrden();
-  guardarMuestra(nodo.tDatos);
+  guardarMuestra(ahora);
 
   LECTURAS.forEach(k => animarLectura(k, nodo[k]));
   pintarEstado();
@@ -193,6 +215,7 @@ function recibirDatos(d) {
 
 function recibirEstado(texto) {
   enlace.estadoNodo = leerEstadoNodo(texto);
+  if (enlace.estadoNodo === 'offline') nodo.tVivo = 0;   // Last Will: el nodo cayó, no hace falta esperar
   pintarConexion();
 }
 
@@ -298,43 +321,95 @@ function valorMostrado(clave) {
 }
 
 /* ============================================================================
-   ===== CONEXIÓN: nodo online / offline / sin broker =====
+   ===== CONEXIÓN: broker y nodo, cada uno con su píldora en la barra =====
+   Broker: conectando / conectado / sin conexión (eventos del cliente MQTT).
+   Nodo:   esperando / online / offline, o "sin verificar" si no hay broker.
+   Online exige una lectura EN VIVO en los últimos msVigilancia (3 × el
+   periodo de publicación); el vigilante nunca cierra la conexión al broker.
    ========================================================================== */
-function enLinea() {
-  return enlace.broker === 'conectado' && enlace.estadoNodo !== 'offline' &&
-         nodo.hayDatos && Date.now() - nodo.tDatos < CONFIG.msSinDatos;
-}
-function pintarConexion() {
+function estadoNodo() {
+  if (enlace.broker === 'conectando') return 'esperando';
+  if (enlace.broker === 'sin') return 'desconocido';
   const ahora = Date.now();
-  let est, txt, franja = '';
-  if (enlace.broker === 'conectando') {
-    est = 'conectando'; txt = 'Conectando…';
-  } else if (enlace.broker === 'sin') {
-    est = 'sin'; txt = 'Sin conexión al broker';
-    franja = 'Sin conexión al broker. ' + (nodo.hayDatos ? 'Se muestra la última lectura conocida.' : 'Se reintenta cada 3 s.');
-  } else if (enLinea()) {
-    est = 'online'; txt = 'Nodo online · hace ' + Math.max(1, Math.round((ahora - nodo.tDatos) / 1000)) + ' s';
-  } else if (enlace.estadoNodo !== 'offline' && ahora - enlace.tConexion < CONFIG.msSinDatos) {
-    est = 'esperando'; txt = 'Esperando datos del nodo…';
-  } else {
-    est = 'offline'; txt = 'Nodo offline · sin datos' + (nodo.hayDatos ? ' desde ' + hora(nodo.tDatos, true) : '');
-    franja = 'El nodo no responde. ' + (nodo.hayDatos ? 'Se muestra la última lectura conocida.' : 'Aún no hay lecturas.');
+  if (nodo.tVivo && ahora - nodo.tVivo <= msVigilancia) return 'online';
+  if (enlace.estadoNodo === 'offline') return 'offline';
+  // Recién conectado y aún sin lecturas en vivo: se le da un margen
+  if (nodo.tVivo < enlace.tConexion && ahora - enlace.tConexion <= msVigilancia) return 'esperando';
+  return 'offline';
+}
+function enLinea() { return estadoNodo() === 'online'; }
+
+// Por qué no hay broker, en palabras (franja y título de la píldora)
+function motivoBroker() {
+  if (navigator.onLine === false) return 'este equipo no tiene red';
+  if (enlace.rechazo) {
+    if (enlace.conUsuario) return 'el broker rechazó el usuario o la clave';
+    return enlace.config === 'fallo'
+      ? 'no se pudo leer /api/config y la página no tiene usuario para el broker'
+      : 'el servidor no tiene MQTT_USUARIO ni MQTT_CLAVE';
   }
-  dom.nodo.dataset.estado = est;
-  if (dom.nodoTxt.textContent !== txt) dom.nodoTxt.textContent = txt;
+  if (enlace.error) return enlace.error;
+  let host = enlace.url;
+  try { host = new URL(enlace.url).host; } catch (error) { /* se deja la URL tal cual */ }
+  return host + ' no responde';
+}
+
+function pintarPildora(pil, txt, estado, texto, titulo) {
+  pil.dataset.estado = estado;
+  if (txt.textContent !== texto) txt.textContent = texto;
+  pil.title = titulo;
+}
+
+function pintarConexion() {
+  const est = estadoNodo();
+  const motivo = enlace.broker === 'sin' ? motivoBroker() : '';
+
+  // Píldora del broker
+  const TXT_BROKER = { conectando: 'conectando…', conectado: 'conectado', sin: 'sin conexión' };
+  pintarPildora(dom.pilBroker, dom.brokerTxt, enlace.broker, TXT_BROKER[enlace.broker],
+    enlace.url + (motivo ? ' · ' + motivo : ''));
+
+  // Píldora del nodo, con la hora de la última lectura. De una retenida no se
+  // sabe cuándo se tomó, así que no se le pone hora.
+  const hLectura = hora(nodo.tLectura, true);
+  const conHora = nodo.hayDatos && !nodo.retenida;
+  const TXT_NODO = {
+    esperando: 'esperando datos…',
+    online: 'online · ' + hLectura,
+    offline: conHora ? 'offline desde ' + hLectura : nodo.hayDatos ? 'offline · lectura retenida' : 'offline · sin datos',
+    desconocido: 'sin verificar' + (conHora ? ' · ' + hLectura : '')
+  };
+  pintarPildora(dom.pilNodo, dom.nodoTxt, est, TXT_NODO[est],
+    !nodo.hayDatos ? 'Aún no hay lecturas' : 'Última lectura: ' + hLectura + (nodo.retenida ? ' (retenida)' : ''));
+
+  // Franja de aviso bajo la barra
+  const conocida = nodo.hayDatos ? ' Se muestra la última lectura conocida.' : '';
+  let franja = '';
+  if (enlace.broker === 'sin') {
+    const reintento = enlace.fatal ? 'Revisa la configuración y recarga la página.'
+      : navigator.onLine === false ? 'Se reconecta al volver la red.'
+      : 'Se reintenta cada ' + CONFIG.mqtt.msReconexion / 1000 + ' s.';
+    franja = 'Sin conexión al broker: ' + motivo + '. ' + reintento + conocida;
+  } else if (est === 'offline') {
+    franja = (enlace.negados.length ? 'El broker no deja leer ' + enlace.negados.join(', ') + ': revisa su ACL.'
+      : 'El nodo no responde.') + (nodo.hayDatos ? conocida : ' Aún no hay lecturas.');
+  }
   if (dom.franjaTxt.textContent !== franja) dom.franjaTxt.textContent = franja;
   dom.franja.hidden = !franja;
   document.body.classList.toggle('con-franja', !!franja);
 
-  // Tarjetas de datos: "Última lectura" si el nodo no responde, "Simulado" en manual
-  const viejo = (est === 'offline' || est === 'sin') && nodo.hayDatos;
+  // Tarjetas de datos: "Esperando" sin lecturas, "Última lectura" si el nodo
+  // no responde y "Simulado" en manual
+  const viejo = nodo.hayDatos && (est === 'offline' || est === 'desconocido');
+  const TXT_CHIP = { esperando: 'Esperando', ultima: 'Última lectura', simulado: 'Simulado' };
   document.querySelectorAll('.dato').forEach(card => {
-    card.classList.toggle('viejo', viejo);
-    const chip = card.querySelector('[data-chip]');
     const simulado = nodo.hayDatos && nodo.manual && card.id !== 'cardEstado';
-    chip.hidden = !viejo && !simulado;
-    chip.textContent = viejo ? 'Última lectura' : 'Simulado';
-    chip.dataset.tipo = viejo ? 'ultima' : 'simulado';
+    const tipo = !nodo.hayDatos ? 'esperando' : viejo ? 'ultima' : simulado ? 'simulado' : '';
+    const chip = card.querySelector('[data-chip]');
+    card.classList.toggle('viejo', viejo);
+    chip.hidden = !tipo;
+    chip.textContent = TXT_CHIP[tipo] || '';
+    chip.dataset.tipo = tipo;
   });
   pintarControl();
 }
@@ -700,34 +775,135 @@ $('btnPaneles').addEventListener('click', function () {
 
 /* ============================================================================
    ===== MQTT =====
-   mqtt.js sobre WebSocket seguro. Se suscribe a los tres tópicos (también al
-   de control, para seguir lo que cambie Node-RED) y reintenta cada 3 s.
+   mqtt.js sobre WebSocket seguro. Conecta solo al cargar la página, se vuelve
+   a suscribir a los tres tópicos en cada conexión (también al de control,
+   para seguir lo que cambie Node-RED) y reintenta cada 3 s.
    ========================================================================== */
+// URL y credenciales que da el servidor (variables de entorno). En un hosting
+// sólo estático /api/config no existe y se usa CONFIG.mqtt. Si falla, queda
+// anotado para explicarlo en la barra cuando el broker rechace la conexión.
+function leerConfig() {
+  const control = window.AbortController ? new AbortController() : null;
+  const reloj = setTimeout(() => { if (control) control.abort(); }, CONFIG.mqtt.msConfig);
+  return fetch('api/config', { cache: 'no-store', signal: control ? control.signal : undefined })
+    .then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(remoto => {
+      const mqtt = (remoto && remoto.mqtt) || {};
+      enlace.config = mqtt.usuario ? 'ok' : 'sin-usuario';
+      if (!mqtt.usuario) console.warn('[MQTT] /api/config no trae usuario: el servidor no tiene MQTT_USUARIO / MQTT_CLAVE');
+      return mqtt;
+    })
+    .catch(error => {
+      enlace.config = 'fallo';
+      console.warn('[MQTT] no se pudo leer /api/config (' + error.message + '): se usa CONFIG.mqtt');
+      return {};
+    })
+    .then(mqtt => {
+      clearTimeout(reloj);
+      return Object.assign({}, CONFIG.mqtt, mqtt);
+    });
+}
+
 function conectarMqtt(cfg) {
-  if (!window.mqtt) { enlace.broker = 'sin'; pintarConexion(); return; }
   const T = CONFIG.topics;
-  const cliente = window.mqtt.connect(cfg.url, {
-    clientId: 'maqueta-web-' + Math.random().toString(16).slice(2, 10),
-    username: cfg.usuario || undefined,
-    password: cfg.clave || undefined,
-    clean: true, keepalive: cfg.keepalive, reconnectPeriod: cfg.msReconexion, connectTimeout: 10000
-  });
+  enlace.url = cfg.url;
+  enlace.conUsuario = !!cfg.usuario;
+
+  let cliente;
+  try {
+    if (!window.mqtt) throw new Error('no se cargó la librería mqtt.js');
+    console.info('[MQTT] conectando a ' + cfg.url + (cfg.usuario ? ' como ' + cfg.usuario : ' sin usuario'));
+    cliente = window.mqtt.connect(cfg.url, {
+      clientId: 'maqueta-web-' + Math.random().toString(16).slice(2, 10),   // uno por pestaña
+      username: cfg.usuario || undefined,
+      password: cfg.clave || undefined,
+      clean: true,
+      keepalive: cfg.keepalive,
+      reconnectPeriod: cfg.msReconexion,
+      connectTimeout: cfg.msConexion,
+      resubscribe: false,                    // la suscripción se hace a mano en cada 'connect'
+      reconnectOnConnackError: true          // sin esto, un rechazo del broker detiene los reintentos para siempre
+    });
+  } catch (error) {                          // p. ej. una MQTT_URL mal escrita
+    console.error('[MQTT] no se pudo crear el cliente: ' + error.message);
+    enlace.broker = 'sin';
+    enlace.error = error.message;
+    enlace.fatal = true;
+    pintarConexion();
+    return;
+  }
+
+  // Fase del cliente: 'intentando' (hay un intento en curso), 'conectado' o
+  // 'cerrado' (sin conexión, a la espera del próximo intento)
+  let fase = 'intentando', tCierre = 0;
+  const sinBroker = () => {
+    enlace.broker = 'sin';
+    pintarConexion();
+  };
+
   cliente.on('connect', () => {
+    fase = 'conectado';
+    console.info('[MQTT] conectado al broker');
     enlace.broker = 'conectado';
     enlace.tConexion = Date.now();
+    enlace.error = '';
+    enlace.rechazo = false;
+    enlace.negados = [];
+    // La sesión es limpia: en cada conexión hay que volver a suscribirse a todo.
+    // Al suscribirse, el broker manda enseguida lo retenido de cada tópico.
     const suscripciones = {};
     suscripciones[T.datos] = { qos: 0 };
     suscripciones[T.estado] = { qos: 1 };
     suscripciones[T.control] = { qos: 1 };
-    cliente.subscribe(suscripciones);
+    cliente.subscribe(suscripciones, (error, concedidas) => {
+      if (error) { console.error('[MQTT] no se pudo suscribir: ' + error.message); return; }
+      enlace.negados = concedidas.filter(s => s.qos === 128).map(s => s.topic);
+      enlace.negados.forEach(t => console.warn('[MQTT] el broker negó la suscripción a ' + t + ' (revisa el ACL)'));
+      pintarConexion();
+    });
     pintarConexion();
   });
-  const sinBroker = () => { if (enlace.broker !== 'sin') { enlace.broker = 'sin'; pintarConexion(); } };
-  cliente.on('close', sinBroker);
-  cliente.on('offline', sinBroker);
-  cliente.on('error', sinBroker);
-  cliente.on('message', (topic, carga) => alLlegar(topic, carga.toString()));
-  transporte.publicar = (topic, texto) => { cliente.publish(topic, texto, { qos: 1, retain: true }); };
+  cliente.on('reconnect', () => {
+    fase = 'intentando';
+    console.info('[MQTT] reintentando la conexión…');
+  });
+  cliente.on('close', () => {
+    fase = 'cerrado';
+    tCierre = Date.now();
+    console.warn('[MQTT] conexión cerrada');
+    sinBroker();
+  });
+  cliente.on('offline', () => {
+    console.warn('[MQTT] sin conexión al broker; mqtt.js reintenta cada ' + cfg.msReconexion / 1000 + ' s');
+    sinBroker();
+  });
+  cliente.on('error', error => {
+    console.error('[MQTT] error: ' + error.message);
+    enlace.rechazo = [4, 5, 134, 135].indexOf(error.code) >= 0;   // usuario o clave mal, o no autorizado
+    enlace.error = error.message === 'Keepalive timeout' ? 'el broker dejó de responder' : error.message;
+    sinBroker();
+  });
+  cliente.on('message', (topic, carga, paquete) => alLlegar(topic, carga.toString(), paquete.retain));
+
+  transporte.publicar = (topic, texto) => {
+    cliente.publish(topic, texto, { qos: 1, retain: true }, error => {
+      if (error) console.error('[MQTT] no se pudo publicar en ' + topic + ': ' + error.message);
+    });
+  };
+  // Reconexión forzada, sólo si no hay conexión ni un intento en curso
+  transporte.reconectar = motivo => {
+    if (fase !== 'cerrado') return;
+    console.info('[MQTT] reconexión forzada: ' + motivo);
+    cliente.reconnect();
+  };
+  // Red de seguridad, cada segundo: si tras cerrarse no empezó otro intento en
+  // dos periodos (mqtt.js no reintentó o el navegador frenó su temporizador), se fuerza
+  transporte.vigilar = () => {
+    if (fase === 'cerrado' && Date.now() - tCierre > 2 * cfg.msReconexion) transporte.reconectar('no hubo reintento automático');
+  };
 }
 
 /* ============================================================================
@@ -790,35 +966,31 @@ function iniciarDemo(variante) {
       alLlegar(T.control, texto);                // el broker lo reenvía a quien esté suscrito
     }, 80);
   };
-  alLlegar(T.estado, 'online');
-  alLlegar(T.control, '{"modo":"auto"}');
-  alLlegar(T.datos, JSON.stringify(lectura(Date.now())));
-  const ciclo = setInterval(() => alLlegar(T.datos, JSON.stringify(lectura(Date.now()))), CONFIG.demo.msCiclo);
+  // Como el broker: primero lo retenido de cada tópico, luego las lecturas en vivo
+  alLlegar(T.estado, 'online', true);
+  alLlegar(T.control, '{"modo":"auto"}', true);
+  alLlegar(T.datos, JSON.stringify(lectura(Date.now())), true);
+  const ciclo = setInterval(() => alLlegar(T.datos, JSON.stringify(lectura(Date.now()))), CONFIG.msPublicacion);
   if (variante === 'offline') setTimeout(() => { clearInterval(ciclo); alLlegar(T.estado, 'offline'); }, 2500);
 }
 
 /* ============================================================================
    ===== ARRANQUE =====
    ========================================================================== */
-const demo = new URLSearchParams(location.search).get('demo');
+// Sólo ?demo=1 o ?demo=offline activan el nodo falso
+const parametroDemo = new URLSearchParams(location.search).get('demo');
+const demo = parametroDemo === '1' || parametroDemo === 'offline' ? parametroDemo : null;
 if (!demo) cargarHistorial();
 crearGraficas();
 pintarEstado();
 pintarConexion();
 
-if (demo) {
-  iniciarDemo(demo);
-} else {
-  // El servidor puede dar la URL y las credenciales del broker (variables de
-  // entorno). En un hosting sólo estático no existe /api/config: se usa CONFIG.
-  fetch('api/config', { cache: 'no-store' })
-    .then(r => (r.ok ? r.json() : null))
-    .catch(() => null)
-    .then(remoto => conectarMqtt(Object.assign({}, CONFIG.mqtt, remoto && remoto.mqtt)));
-}
+if (demo) iniciarDemo(demo);
+else leerConfig().then(conectarMqtt);          // se conecta solo, al cargar la página
 
-// Una vez por segundo: "hace N s", corte por falta de datos, variaciones y gráficas
+// Una vez por segundo: reintento de reserva, vigilante del nodo, variaciones y gráficas
 setInterval(() => {
+  transporte.vigilar();
   pintarConexion();
   pintarVariaciones();
   if (graficasSucias || rango <= 5) actualizarGraficas();
@@ -827,9 +999,23 @@ setInterval(() => {
 pintarVariaciones();
 actualizarGraficas();
 window.addEventListener('pagehide', guardarHistorial);
+
+// Al volver a la pestaña o a la red no se espera al temporizador de mqtt.js
+// (el navegador lo frena en segundo plano): se reconecta enseguida.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
+  transporte.reconectar('la pestaña volvió al frente');
+  pintarConexion();
   LECTURAS.forEach(k => { if (nodo[k] !== null) animarLectura(k, nodo[k]); });
   actualizarGraficas();
+});
+window.addEventListener('online', () => {
+  console.info('[MQTT] el equipo recuperó la red');
+  pintarConexion();
+  transporte.reconectar('volvió la red');
+});
+window.addEventListener('offline', () => {
+  console.warn('[MQTT] el equipo perdió la red');
+  pintarConexion();
 });
 })();
