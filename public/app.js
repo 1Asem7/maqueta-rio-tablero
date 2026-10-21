@@ -24,18 +24,27 @@ const CONFIG = {
     control: 'ucol-eq1/rio/nodo1/control'    // pub + sub · QoS 1 · retenido · JSON del modo manual
   },
 
+  // true = los visitantes pueden pasar a modo manual y mover la compuerta.
+  // false = "Solo lectura": se ocultan los controles y la página nunca publica.
+  controlHabilitado: true,
+
   // Broker: Mosquitto por WebSocket seguro detrás de Cloudflare Tunnel, la
-  // misma ruta que usa el ESP32. El usuario y la clave son los del usuario web
-  // de Mosquitto; si el servidor los da en /api/config, mandan esos.
+  // misma ruta que usa el ESP32. El usuario es el de la página (maquetaweb, con
+  // ACL: lee datos y estado; lee y escribe sólo control). NUNCA pongas aquí las
+  // claves de esp32 ni de nodered.
+  // La clave queda a la vista de cualquiera que abra la página o el repositorio
+  // (es público): es una decisión aceptada para la exposición.
+  // Con "npm start", si el servidor da otros valores en /api/config, mandan esos.
   mqtt: {
     url: 'wss://mqtt.eparedes.dev/mqtt',
-    usuario: '',
-    clave: '',
+    usuario: 'maquetaweb',
+    clave: 'Maqueta_17@',            // ← sustituye este texto por la clave de maquetaweb
     keepalive: 30,                           // s; Cloudflare corta el WebSocket tras ~100 s sin tráfico
     msReconexion: 3000,                      // reconnectPeriod
     msConexion: 10000,                       // connectTimeout
-    msConfig: 5000                           // espera máxima de /api/config
+    msConfig: 2500                           // espera máxima de /api/config (en un sitio estático no existe)
   },
+  msOcultaReconectar: 10000,                 // oculta (teléfono bloqueado) más de esto: al volver se abre otra conexión
 
   nivelMaxCm: 400,                           // 0–400 cm reales = 0–100 %
 
@@ -129,7 +138,6 @@ const enlace = {
   tConexion: 0,
   estadoNodo: null,                             // 'online' | 'offline' | null (tópico de estado)
   url: CONFIG.mqtt.url,
-  config: 'ok',                                 // cómo llegó /api/config: 'ok' | 'sin-usuario' | 'fallo'
   conUsuario: false,                            // la página tiene usuario para el broker
   error: '',                                    // último error del cliente MQTT, en palabras
   rechazo: false,                               // el broker rechazó el usuario o la clave
@@ -292,6 +300,7 @@ function completarOrden() {                      // valores que nunca se han ord
 // El mismo JSON que arma Node-RED ("armar comando"): en manual van todos los
 // valores juntos; en automático sólo el modo. QoS 1 y retenido.
 function enviarControl() {
+  if (!CONFIG.controlHabilitado) return;         // solo lectura: nunca se publica
   const r1 = v => Math.round(v * 10) / 10;
   const carga = orden.manual
     ? { modo: 'manual',
@@ -303,6 +312,7 @@ function enviarControl() {
   transporte.publicar(CONFIG.topics.control, JSON.stringify(carga));
 }
 function ordenar(clave, valor) {
+  if (!CONFIG.controlHabilitado) return;
   completarOrden();
   if (clave !== 'manual') orden.manual = true;   // sliders y compuerta sólo se usan en manual
   orden[clave] = valor;
@@ -343,10 +353,7 @@ function enLinea() { return estadoNodo() === 'online'; }
 function motivoBroker() {
   if (navigator.onLine === false) return 'este equipo no tiene red';
   if (enlace.rechazo) {
-    if (enlace.conUsuario) return 'el broker rechazó el usuario o la clave';
-    return enlace.config === 'fallo'
-      ? 'no se pudo leer /api/config y la página no tiene usuario para el broker'
-      : 'el servidor no tiene MQTT_USUARIO ni MQTT_CLAVE';
+    return enlace.conUsuario ? 'el broker rechazó el usuario o la clave' : 'la página no tiene usuario para el broker';
   }
   if (enlace.error) return enlace.error;
   let host = enlace.url;
@@ -559,9 +566,14 @@ sliders.forEach(sl => {
     ordenar(sl.clave, Number(sl.input.value));
   });
 });
-// Soltar sin haber cambiado el valor no dispara "change"
+// Soltar sin haber cambiado el valor no dispara "change", y el slider se quedaría
+// mostrando el valor arrastrado. Pero el navegador confirma el cambio ("change")
+// DESPUÉS de pointerup: reponer el valor aquí mismo lo anularía y nada se publicaría.
+// Por eso se espera un instante; si "change" ya llegó, soltar() dejó arrastrando en false.
 ['pointerup', 'pointercancel'].forEach(tipo => window.addEventListener(tipo, () => {
-  sliders.forEach(sl => { if (sl.arrastrando) { soltar(sl); ponerSlider(sl, valorMostrado(sl.clave)); } });
+  setTimeout(() => {
+    sliders.forEach(sl => { if (sl.arrastrando) { soltar(sl); ponerSlider(sl, valorMostrado(sl.clave)); } });
+  }, 80);
 }));
 
 /* ============================================================================
@@ -790,15 +802,9 @@ function leerConfig() {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     })
-    .then(remoto => {
-      const mqtt = (remoto && remoto.mqtt) || {};
-      enlace.config = mqtt.usuario ? 'ok' : 'sin-usuario';
-      if (!mqtt.usuario) console.warn('[MQTT] /api/config no trae usuario: el servidor no tiene MQTT_USUARIO / MQTT_CLAVE');
-      return mqtt;
-    })
-    .catch(error => {
-      enlace.config = 'fallo';
-      console.warn('[MQTT] no se pudo leer /api/config (' + error.message + '): se usa CONFIG.mqtt');
+    .then(remoto => (remoto && remoto.mqtt) || {})
+    .catch(error => {                        // sitio estático: no hay /api/config (404 o la página de inicio)
+      console.info('[MQTT] sin /api/config (' + error.message + '): se usa CONFIG.mqtt');
       return {};
     })
     .then(mqtt => {
@@ -815,6 +821,8 @@ function conectarMqtt(cfg) {
   let cliente;
   try {
     if (!window.mqtt) throw new Error('no se cargó la librería mqtt.js');
+    // Sin la clave real sólo se conseguiría que el broker rechace a la página cada 3 s
+    if (cfg.clave === 'PEGAR_AQUI_LA_CLAVE') throw new Error('falta pegar la clave de ' + cfg.usuario + ' en CONFIG.mqtt (public/app.js)');
     console.info('[MQTT] conectando a ' + cfg.url + (cfg.usuario ? ' como ' + cfg.usuario : ' sin usuario'));
     cliente = window.mqtt.connect(cfg.url, {
       clientId: 'maqueta-web-' + Math.random().toString(16).slice(2, 10),   // uno por pestaña
@@ -827,7 +835,7 @@ function conectarMqtt(cfg) {
       resubscribe: false,                    // la suscripción se hace a mano en cada 'connect'
       reconnectOnConnackError: true          // sin esto, un rechazo del broker detiene los reintentos para siempre
     });
-  } catch (error) {                          // p. ej. una MQTT_URL mal escrita
+  } catch (error) {                          // p. ej. la clave sin pegar o una MQTT_URL mal escrita
     console.error('[MQTT] no se pudo crear el cliente: ' + error.message);
     enlace.broker = 'sin';
     enlace.error = error.message;
@@ -854,15 +862,18 @@ function conectarMqtt(cfg) {
     enlace.negados = [];
     // La sesión es limpia: en cada conexión hay que volver a suscribirse a todo.
     // Al suscribirse, el broker manda enseguida lo retenido de cada tópico.
-    const suscripciones = {};
-    suscripciones[T.datos] = { qos: 0 };
-    suscripciones[T.estado] = { qos: 1 };
-    suscripciones[T.control] = { qos: 1 };
-    cliente.subscribe(suscripciones, (error, concedidas) => {
-      if (error) { console.error('[MQTT] no se pudo suscribir: ' + error.message); return; }
-      enlace.negados = concedidas.filter(s => s.qos === 128).map(s => s.topic);
-      enlace.negados.forEach(t => console.warn('[MQTT] el broker negó la suscripción a ' + t + ' (revisa el ACL)'));
-      pintarConexion();
+    // Un tópico por suscripción: si el ACL niega uno, mqtt.js sólo avisa con un error y
+    // así se sabe cuál fue.
+    [[T.datos, 0], [T.estado, 1], [T.control, 1]].forEach(par => {
+      cliente.subscribe(par[0], { qos: par[1] }, error => {
+        if (!error) return;
+        console.error('[MQTT] no se pudo suscribir a ' + par[0] + ': ' + error.message);
+        // El broker la negó (ACL): mqtt.js lo avisa como "Subscribe error: …"
+        if ((error.code >= 128 || /^Subscribe error/.test(error.message)) && enlace.negados.indexOf(par[0]) < 0) {
+          enlace.negados.push(par[0]);
+          pintarConexion();
+        }
+      });
     });
     pintarConexion();
   });
@@ -870,9 +881,11 @@ function conectarMqtt(cfg) {
     fase = 'intentando';
     console.info('[MQTT] reintentando la conexión…');
   });
+  let renovando = false;                     // cerramos nosotros para abrir otra conexión: no es una caída
   cliente.on('close', () => {
     fase = 'cerrado';
     tCierre = Date.now();
+    if (renovando) return;
     console.warn('[MQTT] conexión cerrada');
     sinBroker();
   });
@@ -893,11 +906,18 @@ function conectarMqtt(cfg) {
       if (error) console.error('[MQTT] no se pudo publicar en ' + topic + ': ' + error.message);
     });
   };
-  // Reconexión forzada, sólo si no hay conexión ni un intento en curso
-  transporte.reconectar = motivo => {
-    if (fase !== 'cerrado') return;
+  // Reconexión forzada. No hace nada si ya hay un intento en curso. Con "renovar"
+  // también reemplaza una conexión que parece viva: un teléfono bloqueado o un
+  // cambio de WiFi a datos pueden matar el socket sin que el navegador avise.
+  transporte.reconectar = (motivo, renovar) => {
+    if (fase === 'intentando' || (fase === 'conectado' && !renovar)) return;
     console.info('[MQTT] reconexión forzada: ' + motivo);
-    cliente.reconnect();
+    if (fase === 'conectado') {
+      renovando = true;
+      cliente.end(true, () => { renovando = false; cliente.reconnect(); });   // end(true) destruye el socket sin esperar al broker
+    } else {
+      cliente.reconnect();
+    }
   };
   // Red de seguridad, cada segundo: si tras cerrarse no empezó otro intento en
   // dos periodos (mqtt.js no reintentó o el navegador frenó su temporizador), se fuerza
@@ -977,6 +997,12 @@ function iniciarDemo(variante) {
 /* ============================================================================
    ===== ARRANQUE =====
    ========================================================================== */
+// Sin control: se ocultan los controles (CSS) y ordenar() / enviarControl() no publican
+if (!CONFIG.controlHabilitado) {
+  document.body.classList.add('solo-lectura');
+  $('chipSoloLectura').hidden = false;
+}
+
 // Sólo ?demo=1 o ?demo=offline activan el nodo falso
 const parametroDemo = new URLSearchParams(location.search).get('demo');
 const demo = parametroDemo === '1' || parametroDemo === 'offline' ? parametroDemo : null;
@@ -1001,18 +1027,27 @@ actualizarGraficas();
 window.addEventListener('pagehide', guardarHistorial);
 
 // Al volver a la pestaña o a la red no se espera al temporizador de mqtt.js
-// (el navegador lo frena en segundo plano): se reconecta enseguida.
+// (el navegador lo frena en segundo plano): se reconecta enseguida. Si estuvo
+// oculta más de CONFIG.msOcultaReconectar (teléfono bloqueado) la conexión pudo
+// morir sin avisar, así que se abre otra aunque parezca viva.
+let tOculta = 0;
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) return;
-  transporte.reconectar('la pestaña volvió al frente');
+  if (document.hidden) { tOculta = Date.now(); return; }
+  const mucho = tOculta > 0 && Date.now() - tOculta > CONFIG.msOcultaReconectar;
+  tOculta = 0;
+  transporte.reconectar('la pestaña volvió al frente', mucho);
   pintarConexion();
   LECTURAS.forEach(k => { if (nodo[k] !== null) animarLectura(k, nodo[k]); });
   actualizarGraficas();
 });
+// El navegador pudo guardar la página en memoria (iOS al cambiar de app): su socket ya no sirve
+window.addEventListener('pageshow', evento => {
+  if (evento.persisted) transporte.reconectar('la página volvió de la memoria', true);
+});
 window.addEventListener('online', () => {
   console.info('[MQTT] el equipo recuperó la red');
   pintarConexion();
-  transporte.reconectar('volvió la red');
+  transporte.reconectar('volvió la red', true);   // con el cambio de red el socket anterior ya no sirve
 });
 window.addEventListener('offline', () => {
   console.warn('[MQTT] el equipo perdió la red');
