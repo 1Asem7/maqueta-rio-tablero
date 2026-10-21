@@ -38,7 +38,7 @@ const CONFIG = {
   mqtt: {
     url: 'wss://mqtt.eparedes.dev/mqtt',
     usuario: 'maquetaweb',
-    clave: 'PEGAR_AQUI_LA_CLAVE',            // ← sustituye este texto por la clave de maquetaweb
+    clave: 'Maqueta_17@',            // ← sustituye este texto por la clave de maquetaweb
     keepalive: 30,                           // s; Cloudflare corta el WebSocket tras ~100 s sin tráfico
     msReconexion: 3000,                      // reconnectPeriod
     msConexion: 10000,                       // connectTimeout
