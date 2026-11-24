@@ -4,7 +4,7 @@ Documento de traspaso para continuar en otro chat, donde está la configuración
 
 ## 1. Qué es el proyecto
 
-Página web con la maqueta 3D del río (v2.3, 45 × 25 × 20 cm) y un tablero de vidrio encima. Muestra lo que publica el nodo ESP32 de alerta temprana por nivel de río (Colima) y manda las mismas órdenes de modo manual que el dashboard de Node-RED.
+Página web con la maqueta 3D del río (v3.0, la maqueta física terminada: tabla de 46.5 × 25 cm, ≈ 21 cm hasta el bloque) y un tablero de vidrio encima. Muestra lo que publica el nodo ESP32 de alerta temprana por nivel de río (Colima) y manda las mismas órdenes de modo manual que el dashboard de Node-RED.
 
 - Repositorio: https://github.com/1Asem7/maqueta-rio-tablero (público). Rama principal: `main`.
 - Stack: Node 18+, Express 5 (`server.js`), frontend sin compilar en `public/` (three.js r128, Chart.js 4, mqtt.js 5.16, Lucide), servidos desde `/vendor` con respaldo en CDN.

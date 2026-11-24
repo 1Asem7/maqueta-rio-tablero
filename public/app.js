@@ -88,7 +88,7 @@ function hora(ms, conSegundos) {
 
 const mqQuieto = window.matchMedia('(prefers-reduced-motion: reduce)');
 const Escena = window.Escena || {
-  fijarNivel: nada, fijarCompuerta: nada, fijarBuzzer: nada, fijarLluvia: nada,
+  fijarNivel: nada, fijarCompuerta: nada, fijarBuzzer: nada, fijarLed: nada, fijarLluvia: nada,
   mostrarComponentes: nada, restablecerVista: nada
 };
 if (window.lucide) window.lucide.createIcons({ attrs: { 'stroke-width': 1.75 } });
@@ -219,6 +219,7 @@ function recibirDatos(d, retenido) {
   Escena.fijarLluvia(nodo.lluvia);
   Escena.fijarCompuerta(nodo.compuerta);
   Escena.fijarBuzzer(nodo.buzzer);
+  Escena.fijarLed(d.led);                        // el LED RGB del farol: verde / amarillo / rojo
 }
 
 function recibirEstado(texto) {
