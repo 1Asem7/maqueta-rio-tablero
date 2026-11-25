@@ -765,7 +765,7 @@ function actualizarCono(yAgua) {
    llega la primera lectura.
    ========================================================================== */
 const FA = CONFIG.farol;
-let ledFarol, luzFarol;
+let ledFarol, luzFarol, brilloFarol;
 const farol = new THREE.Group(); farol.name = 'farol';
 (function construirFarol() {
   const g = farol, [cw, ch, cd] = FA.cabeza, y0 = FA.poste;
@@ -783,6 +783,11 @@ const farol = new THREE.Group(); farol.name = 'farol';
   ledFarol.position.set(0, y0 + 1.25, 0); ledFarol.name = 'farol_led_rgb';
   g.add(ledFarol);
   g.add(cilindro(0.28, 0.28, 0.6, 10, Ph({ color: 0xe8eef2, transparent: true, opacity: 0.8 }), 0, y0 + 0.75, 0, 'farol_led_cuerpo'));
+  // Resplandor dentro de la cabeza: el LED real es chiquito y de lejos no se notaría el color
+  brilloFarol = new THREE.Mesh(new THREE.SphereGeometry(1.15, 16, 12),
+    new THREE.MeshBasicMaterial({ color: CONFIG.colores.ledBajo, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+  brilloFarol.position.set(0, y0 + 1.5, 0); brilloFarol.name = 'farol_brillo'; brilloFarol.renderOrder = 5;
+  g.add(brilloFarol);
   luzFarol = new THREE.PointLight(CONFIG.colores.ledBajo, 0, 14, 2);
   luzFarol.position.set(0, y0 + 1.4, 0);
   g.add(luzFarol);
@@ -1334,6 +1339,8 @@ function fijarLed(color) {
   ledFarol.material.color.setHex(hex === undefined ? CONFIG.colores.ledApagado : hex);
   if (hex !== undefined) luzFarol.color.setHex(hex);
   luzFarol.intensity = hex === undefined ? 0 : 0.7;
+  if (hex !== undefined) brilloFarol.material.color.setHex(hex);
+  brilloFarol.material.opacity = hex === undefined ? 0 : 0.55;
 }
 function fijarLluvia(pct) { estado.lluvia = limitar(Number(pct) || 0, 0, 100); }
 function mostrarComponentes(ver) {
