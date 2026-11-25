@@ -26,7 +26,7 @@ To work without the node powered on, open `http://localhost:3000/?demo=1`: a fak
 
 The app runs as a single Node process with no build step: on the server, `npm ci --omit=dev` and then `npm start`. `node_modules/` is not committed, so the install step is required (the libraries are served out of it). The host's reverse proxy or platform should forward the subdomain to `PORT`; `GET /api/salud` is the health check. Files in `public/` are sent with `Cache-Control: no-cache` so a new deploy shows up on reload; `/vendor/*` is cached for 30 days because the library versions are pinned in `package.json`.
 
-The production site (`maquetaiot.eparedes.dev`) is a **static site on HubDeploy**: `server.js` does not run, `/api/config` does not exist and env vars are not used. So the broker user and password live in `CONFIG.mqtt` in `public/app.js` (user `maquetaweb`; the password replaces the placeholder `PEGAR_AQUI_LA_CLAVE`). The repo is public, so that password is public: this was decided on purpose for the school expo. The Mosquitto user `maquetaweb` must have exactly this ACL: read `datos` and `estado`, readwrite `control`. Never put the `esp32` or `nodered` credentials in the repo.
+The production site (`maquetaiot.eparedes.dev`) is a **static site on HubDeploy**: `server.js` does not run, `/api/config` does not exist and env vars are not used. So the broker user and password live in `CONFIG.mqtt` in `public/app.js` (user `maquetaweb`; the password replaces the placeholder `PEGAR_AQUI_LA_CLAVE`). The repo is public, so that password is public: this was decided on purpose for the school expo. The Mosquitto user `maquetaweb` must have exactly this ACL: read `datos` and `estado`, readwrite `control` and readwrite `ia` (the Colab notebook uses the same user to publish the forecast). Never put the `esp32` or `nodered` credentials in the repo.
 
 With `npm start` (local or a Node host) `GET /api/config` can still override the URL, user and password through `MQTT_URL`, `MQTT_USUARIO`, `MQTT_CLAVE`; if it is missing or answers with something that is not JSON, `CONFIG.mqtt` is used.
 
@@ -38,7 +38,9 @@ With `npm start` (local or a Node host) `GET /api/config` can still override the
 - `public/index.html`: markup only. It loads **three.js r128 global builds** (`THREE`, `THREE.OrbitControls` from `examples/js`), Chart.js 4, mqtt.js 5 and Lucide from `/vendor`, each with a CDN fallback via `document.write`, so the page also works on a static-only host. There are no ES modules and no bundler. Stay on r128 APIs, because `examples/js` was removed in later three.js versions.
 - `public/styles.css`: the design tokens and every component. One visual language: glass over a green background. Only the five palette colors and their transparencies; the three semantic colors (`--risk-*`) are reserved for risk, buzzer, offline and threshold marks. No emojis, no glass nested inside glass.
 - `public/escena.js`: the 3D scene only. It never reads sensors or computes risk.
-- `public/app.js`: the dashboard: MQTT, cards, controls, history, demo mode.
+- `public/app.js`: the dashboard: MQTT, cards, controls, history, demo mode, "Simular crecida".
+- `public/ia.js`: the "Pronóstico IA" card. It only paints what the Colab notebook publishes on the `ia` topic; it never predicts. `app.js` feeds it through `window.IA.recibir()`.
+- `ia/Proyecto_IA_Nodo_Rio.ipynb`: the AI (Google Colab). Simulated storms → 6 classifiers (XGBoost wins) that predict the firmware's risk 15 s ahead; section 9 runs it live: subscribes to `datos`, publishes to `ia`. `ia/PASOS_IA.md` has the server/Colab/demo steps.
 - `public/simulador.html`: the previous standalone simulator (sliders, flood simulation, exploded view, OBJ export), kept untouched as a legacy copy. The dashboard does not use it.
 
 `escena.js` and `app.js` are each wrapped in an IIFE and **each has its own `CONFIG`**: model dimensions in `escena.js`, topics/broker/thresholds in `app.js`. The only link between them is `window.Escena`.
@@ -52,8 +54,12 @@ They come from the firmware (PlatformIO project `Practica_x.2`) and the Node-RED
 | `ucol-eq1/rio/nodo1/datos` | sub, QoS 0, every 1 s | JSON: `nivel_cm` (0–400), `lluvia_pct`, `humedad_pct`, `riesgo` (0/1/2), `buzzer` (`apagado`/`intermitente`/`continuo`), `compuerta` (0/90), `modo` (`auto`/`manual`), plus `distancia_cm`, `led`, `compuerta_modo` |
 | `ucol-eq1/rio/nodo1/estado` | sub, QoS 1 | `online` retained on connect, `offline` as Last Will |
 | `ucol-eq1/rio/nodo1/control` | pub + sub, QoS 1, retained | `{"modo":"auto"}` or `{"modo":"manual","nivel_cm":..,"lluvia_pct":..,"humedad_pct":..,"compuerta":0\|90}` |
+| `ucol-eq1/rio/nodo1/ia` | sub, QoS 0, not retained, every 1 s while the Colab notebook runs | `{"riesgo_15s":0\|1\|2,"prob":[bajo,medio,alto],"riesgo_ahora":0\|1\|2,"modo":"auto"\|"manual","horizonte_s":15,"modelo":"XGBoost","t":<epoch s>}` |
 
-- The page **reads** the risk; it never computes it. The thresholds are fixed in the firmware.
+- The page **reads** the risk; it never computes it. The thresholds are fixed in the firmware. The same goes for the AI forecast: the notebook computes it, the card shows it. The AI never drives actuators.
+- `ia` is subscribed separately from the other three, so an ACL problem there never shows in the top bar; the card says "Esperando a la IA" (Mosquitto 2 grants the subscription and just drops the messages). The card goes back to waiting after 5 s without messages.
+- "Simular crecida" (enabled only in confirmed manual mode) sends one control message per second for `CONFIG.crecida.pasos` s: rain first, then soil moisture, then the river level, so the AI sees a trend. Moving any control, leaving manual mode or the node going offline stops it.
+- In `?demo=1` a fake AI publishes on `ia` (it extrapolates the last 10 s of level and applies the risk rules).
 - The interface shows everything in % (0–400 cm = 0–100 %), never cm. Conversion happens only at the edges (`aPct`, `enviarControl`).
 - In manual mode the node reports the simulated values in `nivel_cm`/`lluvia_pct`/`humedad_pct`, which is how a slider change gets confirmed.
 
@@ -93,4 +99,5 @@ Labels, guide lines, dimensions, flow arrows and the ultrasonic cone are hidden 
 - Palette colors are duplicated on purpose: tokens and `--rgb-*` triplets in `styles.css` (Chart.js reads them from there), and `CONFIG.colores.fondo/hueso/haloMedio/haloAlto` in `escena.js`.
 - The firmware has no pump or relay output; the model draws them and the pump always "runs". The pin labels in `ETIQUETAS` follow the firmware (TRIG 33 / ECHO 32, AO 34 and 35 on ADC1, buzzer 14, servo 13).
 - Respect `prefers-reduced-motion`: CSS animations are switched off globally, `animarLectura` paints directly, and the scene drops waves, rain and pulses (`mqQuieto`).
+- The left column holds three cards (level, rain/humidity, AI). At desktop heights under 800 px a compact rule hides the AI probability bars (one line instead), shrinks the cylinder and rings, and removes the control separators, so both columns fit at 1280 × 720.
 - When you add a card or change the layout, check the three breakpoints (≥ 1280 px floating cards, 768–1279 px two columns under the scene, < 768 px one column) and the low-height desktop rules; the right column must fit without scrolling at 1280 × 720.

@@ -21,7 +21,8 @@ const CONFIG = {
   topics: {
     datos:   'ucol-eq1/rio/nodo1/datos',     // sub · QoS 0 · JSON con la lectura de cada ciclo (1 s)
     estado:  'ucol-eq1/rio/nodo1/estado',    // sub · QoS 1 · "online" retenido, "offline" como Last Will
-    control: 'ucol-eq1/rio/nodo1/control'    // pub + sub · QoS 1 · retenido · JSON del modo manual
+    control: 'ucol-eq1/rio/nodo1/control',   // pub + sub · QoS 1 · retenido · JSON del modo manual
+    ia:      'ucol-eq1/rio/nodo1/ia'         // sub · QoS 0 · pronóstico que publica el cuaderno de Colab (ia.js lo pinta)
   },
 
   // true = los visitantes pueden pasar a modo manual y mover la compuerta.
@@ -60,6 +61,15 @@ const CONFIG = {
   publicacionesPerdidas: 3,                  // tantas seguidas sin llegar = nodo offline
   msConfirmacion: 3000,                      // espera a que el nodo confirme una orden
   msValor: 600,                              // animación de los números y rellenos
+
+  // "Simular crecida" (modo manual): una tormenta paso a paso, una orden por segundo,
+  // para que la IA vea la tendencia y avise antes que las reglas
+  crecida: {
+    pasos: 45,                               // segundos que dura
+    pasosQuieto: 4,                          // primero se queda en calma (la IA junta historial)
+    calma: { nivel: 20, lluvia: 0, humedad: 40 },
+    meta: { nivel: 90, lluvia: 90, humedad: 95 }   // 90 % de nivel = 360 cm
+  },
 
   historial: {
     rangoInicial: 5,                         // minutos: 5, 15 o 60
@@ -112,7 +122,8 @@ const dom = {
   eCompuerta: $('eCompuerta'), eCompuertaTxt: $('eCompuertaTxt'),
   eBuzzer: $('eBuzzer'), eBuzzerTxt: $('eBuzzerTxt'),
   swModo: $('swModo'), swCompuerta: $('swCompuerta'), ctlCompuerta: $('ctlCompuerta'),
-  cardHistorial: $('cardHistorial'), btnPlegar: $('btnPlegar')
+  cardHistorial: $('cardHistorial'), btnPlegar: $('btnPlegar'),
+  btnCrecida: $('btnCrecida'), btnCrecidaTxt: $('btnCrecidaTxt')
 };
 
 /* ============================================================================
@@ -186,6 +197,7 @@ function alLlegar(topic, texto, retenido) {
   if (topic === CONFIG.topics.datos) recibirDatos(leerJSON(texto), retenido);
   else if (topic === CONFIG.topics.estado) recibirEstado(texto);
   else if (topic === CONFIG.topics.control) recibirControl(leerJSON(texto));
+  else if (topic === CONFIG.topics.ia && window.IA) window.IA.recibir(leerJSON(texto));
 }
 
 function recibirDatos(d, retenido) {
@@ -313,6 +325,7 @@ function enviarControl() {
 }
 function ordenar(clave, valor) {
   if (!CONFIG.controlHabilitado) return;
+  if (crecida.reloj) detenerCrecida('Simulación detenida: cambiaste un control');
   completarOrden();
   if (clave !== 'manual') orden.manual = true;   // sliders y compuerta sólo se usan en manual
   orden[clave] = valor;
@@ -527,6 +540,10 @@ function pintarControl() {
   dom.ctlCompuerta.classList.toggle('bloqueado', bloqueado);
   dom.ctlCompuerta.title = motivo;
 
+  dom.btnCrecida.disabled = bloqueado;
+  dom.btnCrecida.title = motivo;
+  if (bloqueado && crecida.reloj) detenerCrecida(!linea ? 'Simulación detenida: el nodo no está en línea' : 'Simulación detenida: el nodo salió de modo manual');
+
   sliders.forEach(sl => {
     if (bloqueado) soltar(sl);
     sl.el.classList.toggle('bloqueado', bloqueado);
@@ -542,6 +559,45 @@ function soltar(sl) {
 }
 
 dom.swModo.addEventListener('click', () => { ordenar('manual', !valorMostrado('manual')); });
+
+// ===== SIMULAR CRECIDA =====
+// Primero llueve, luego se moja el suelo y al final sube el río, como en una tormenta.
+// Cada segundo se manda el mismo JSON de control que mandan los sliders.
+const crecida = { reloj: 0, paso: 0 };
+function pasoCrecida() {
+  const c = CONFIG.crecida;
+  const f = Math.max(0, crecida.paso - c.pasosQuieto) / (c.pasos - c.pasosQuieto);   // 0 → 1
+  const hacia = (clave, rapidez) => c.calma[clave] + (c.meta[clave] - c.calma[clave]) * Math.min(1, f * rapidez);
+  completarOrden();
+  orden.manual = true;
+  orden.lluvia = Math.round(hacia('lluvia', 2.5));
+  orden.humedad = Math.round(hacia('humedad', 1.6));
+  orden.nivel = Math.round(f < 0.2 ? c.calma.nivel : c.calma.nivel + (c.meta.nivel - c.calma.nivel) * (f - 0.2) / 0.8);
+  LECTURAS.forEach(k => marcarPendiente(k, orden[k], true));
+  enviarControl();
+  pintarControl();
+  crecida.paso++;
+  if (crecida.paso > c.pasos) detenerCrecida('Crecida simulada completa');
+}
+function iniciarCrecida() {
+  crecida.paso = 0;
+  dom.btnCrecida.setAttribute('aria-pressed', 'true');
+  dom.btnCrecidaTxt.textContent = 'Detener simulación';
+  pasoCrecida();
+  crecida.reloj = setInterval(pasoCrecida, 1000);
+  avisar('Crecida simulada: mira el pronóstico de la IA');
+}
+function detenerCrecida(motivo) {
+  clearInterval(crecida.reloj);
+  crecida.reloj = 0;
+  dom.btnCrecida.setAttribute('aria-pressed', 'false');
+  dom.btnCrecidaTxt.textContent = 'Simular crecida';
+  if (motivo) avisar(motivo);
+}
+dom.btnCrecida.addEventListener('click', () => {
+  if (crecida.reloj) detenerCrecida('Simulación detenida');
+  else iniciarCrecida();
+});
 dom.swCompuerta.addEventListener('click', () => { ordenar('compuerta', !valorMostrado('compuerta')); });
 
 sliders.forEach(sl => {
@@ -864,6 +920,12 @@ function conectarMqtt(cfg) {
     // Al suscribirse, el broker manda enseguida lo retenido de cada tópico.
     // Un tópico por suscripción: si el ACL niega uno, mqtt.js sólo avisa con un error y
     // así se sabe cuál fue.
+    // El pronóstico de la IA va aparte: si el ACL no lo deja leer, sólo lo avisa su tarjeta
+    cliente.subscribe(T.ia, { qos: 0 }, error => {
+      if (!error) return;
+      console.error('[MQTT] no se pudo suscribir a ' + T.ia + ': ' + error.message);
+      if (window.IA) window.IA.negado();
+    });
     [[T.datos, 0], [T.estado, 1], [T.control, 1]].forEach(par => {
       cliente.subscribe(par[0], { qos: par[1] }, error => {
         if (!error) return;
@@ -990,7 +1052,26 @@ function iniciarDemo(variante) {
   alLlegar(T.estado, 'online', true);
   alLlegar(T.control, '{"modo":"auto"}', true);
   alLlegar(T.datos, JSON.stringify(lectura(Date.now())), true);
-  const ciclo = setInterval(() => alLlegar(T.datos, JSON.stringify(lectura(Date.now()))), CONFIG.msPublicacion);
+  // IA falsa: hace lo que hace el cuaderno de Colab, pero estimando el nivel de
+  // dentro de 15 s con la tendencia de los últimos 10 s
+  const pasados = [];
+  const iaFalsa = d => {
+    const nivel = d.nivel_cm / CONFIG.nivelMaxCm * 100;
+    pasados.push({ nivel: nivel, modo: d.modo });
+    if (pasados.length > 11 || pasados[0].modo !== d.modo) pasados.splice(0, pasados.length - 1);
+    const pendiente = (nivel - pasados[0].nivel) / Math.max(1, pasados.length - 1);
+    const futuro = { nivel: limitar(nivel + pendiente * 15, 0, 100), lluvia: d.lluvia_pct, humedad: d.humedad_pct };
+    const c = riesgo(futuro);
+    const prob = [0.05, 0.05, 0.05];
+    prob[c] = 0.9;
+    return { riesgo_15s: c, prob: prob, riesgo_ahora: d.riesgo, modo: d.modo, horizonte_s: 15,
+             modelo: 'IA de demostración', t: Math.round(Date.now() / 1000) };
+  };
+  const ciclo = setInterval(() => {
+    const d = lectura(Date.now());
+    alLlegar(T.datos, JSON.stringify(d));
+    alLlegar(T.ia, JSON.stringify(iaFalsa(d)));
+  }, CONFIG.msPublicacion);
   if (variante === 'offline') setTimeout(() => { clearInterval(ciclo); alLlegar(T.estado, 'offline'); }, 2500);
 }
 

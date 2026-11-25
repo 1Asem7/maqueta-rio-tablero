@@ -140,6 +140,24 @@
         </div>
       </div>
     </article>
+    <!-- PRONÓSTICO IA: lo publica el cuaderno de Colab en el tópico ia -->
+    <article class="card" id="cardIA">
+      <header class="card-cab">
+        <span class="chip-ico"><i data-lucide="brain"></i></span>
+        <h3>Pronóstico IA</h3>
+        <span class="chip" id="iaOrigen" hidden></span>
+      </header>
+      <div class="ia" id="ia" data-nivel="sin" data-anticipa="false">
+        <div class="ia-cab"><span id="iaEn">En 15 s</span><span class="ia-valor" id="iaTxt">—</span></div>
+        <div class="ia-prob" id="iaProb">&nbsp;</div>
+        <div class="ia-barras">
+          <div class="ia-barra b-bajo"><span>Bajo</span><div class="ia-riel"><i id="iaPb"></i></div><b id="iaVb">–</b></div>
+          <div class="ia-barra b-medio"><span>Medio</span><div class="ia-riel"><i id="iaPm"></i></div><b id="iaVm">–</b></div>
+          <div class="ia-barra b-alto"><span>Alto</span><div class="ia-riel"><i id="iaPa"></i></div><b id="iaVa">–</b></div>
+        </div>
+        <p class="ia-nota" id="iaNota">Esperando a la IA…</p>
+      </div>
+    </article>
   </section>
 
   <!-- ZONA LIBRE: aquí se ve la maqueta; la escena se encuadra en este hueco -->
@@ -272,6 +290,10 @@
             <span class="switch-knob"><i data-lucide="door-closed" class="ico-off"></i><i data-lucide="door-open" class="ico-on"></i><span class="aro"></span></span>
           </button>
         </div>
+        <hr>
+        <button class="btn-crecida" id="btnCrecida" type="button" aria-pressed="false" disabled>
+          <i data-lucide="cloud-lightning"></i><span id="btnCrecidaTxt">Simular crecida</span>
+        </button>
       </article>
     </section>
   </div>
@@ -324,6 +346,7 @@
 <script>window.lucide||document.write('<scr'+'ipt src="https://unpkg.com/lucide@1.55.0/dist/umd/lucide.min.js"><\/scr'+'ipt>');</script>
 
 <script src="escena.js"></script>
+<script src="ia.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
