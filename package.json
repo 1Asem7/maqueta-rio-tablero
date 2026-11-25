@@ -1,6 +1,6 @@
 {
   "name": "maqueta-rio-interactiva",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Maqueta digital 3D con tablero en vivo por MQTT de un sistema IoT de alerta temprana por nivel de río en Colima",
   "private": true,
   "main": "server.js",
