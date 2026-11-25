@@ -1,0 +1,136 @@
+[
+  {
+    "id": "a10f0000000ia0c1",
+    "type": "comment",
+    "z": "a10f000000000001",
+    "name": "Pronostico IA (lo publica el cuaderno de Colab)",
+    "info": "Lee ucol-eq1/rio/nodo1/ia (JSON: riesgo_15s, prob, riesgo_ahora, modo, modelo).\nEl usuario nodered necesita en el ACL de Mosquitto: topic read ucol-eq1/rio/nodo1/ia\nSi pasan 5 s sin mensajes, la tarjeta vuelve a 'Esperando'.",
+    "x": 230,
+    "y": 740,
+    "wires": []
+  },
+  {
+    "id": "a10f00000000g2x5",
+    "type": "ui_group",
+    "name": "Pronóstico IA",
+    "tab": "a10f0000000000t1",
+    "order": 5,
+    "disp": true,
+    "width": "11",
+    "collapse": false,
+    "className": ""
+  },
+  {
+    "id": "a10f0000000ia0m1",
+    "type": "mqtt in",
+    "z": "a10f000000000001",
+    "name": "pronostico IA",
+    "topic": "ucol-eq1/rio/nodo1/ia",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "a10f0000000000b1",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 150,
+    "y": 800,
+    "wires": [
+      [
+        "a10f0000000ia0f1",
+        "a10f0000000ia0t1"
+      ]
+    ]
+  },
+  {
+    "id": "a10f0000000ia0i1",
+    "type": "inject",
+    "z": "a10f000000000001",
+    "name": "al iniciar",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "1",
+    "topic": "",
+    "payload": "{\"sinDatos\":true}",
+    "payloadType": "json",
+    "x": 150,
+    "y": 860,
+    "wires": [
+      [
+        "a10f0000000ia0f1"
+      ]
+    ]
+  },
+  {
+    "id": "a10f0000000ia0t1",
+    "type": "trigger",
+    "z": "a10f000000000001",
+    "name": "5 s sin IA",
+    "op1": "",
+    "op2": "{\"sinDatos\":true}",
+    "op1type": "nul",
+    "op2type": "json",
+    "duration": "5",
+    "extend": true,
+    "overrideDelay": false,
+    "units": "s",
+    "reset": "",
+    "bytopic": "all",
+    "topic": "topic",
+    "outputs": 1,
+    "x": 360,
+    "y": 860,
+    "wires": [
+      [
+        "a10f0000000ia0f1"
+      ]
+    ]
+  },
+  {
+    "id": "a10f0000000ia0f1",
+    "type": "function",
+    "z": "a10f000000000001",
+    "name": "armar pronostico",
+    "func": "// Arma lo que muestra la tarjeta con el pronostico de Colab\nvar clases = ['BAJO', 'MEDIO', 'ALTO'];\nvar colores = ['#2ECC40', '#FFDC00', '#FF4136'];\n\n// Sin mensajes de la IA (al iniciar o 5 s sin datos)\nif (msg.payload.sinDatos) {\n    msg.payload = { texto: 'Esperando', color: '#A3B18A', bajo: 0, medio: 0, alto: 0,\n                    nota: 'Esperando a la IA: ejecuta la seccion 9 del cuaderno de Colab', anticipa: false };\n    return msg;\n}\n\nvar d = msg.payload;\nvar p = d.prob || [0, 0, 0];\nvar anticipa = d.riesgo_15s > d.riesgo_ahora;\nvar nota = d.modelo + (d.modo === 'manual' ? ' con los valores manuales' : ' con los sensores');\nif (anticipa) {\n    nota = 'Alerta anticipada: ahora es ' + clases[d.riesgo_ahora] + ' y la IA espera ' + clases[d.riesgo_15s];\n}\nmsg.payload = {\n    texto: clases[d.riesgo_15s],\n    color: colores[d.riesgo_15s],\n    bajo: Math.round(p[0] * 100),\n    medio: Math.round(p[1] * 100),\n    alto: Math.round(p[2] * 100),\n    nota: nota,\n    anticipa: anticipa\n};\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 560,
+    "y": 800,
+    "wires": [
+      [
+        "a10f0000000ia0u1"
+      ]
+    ]
+  },
+  {
+    "id": "a10f0000000ia0u1",
+    "type": "ui_template",
+    "z": "a10f000000000001",
+    "group": "a10f00000000g2x5",
+    "name": "tarjeta IA",
+    "order": 1,
+    "width": "11",
+    "height": "4",
+    "format": "<div style=\"display:flex; align-items:center; gap:16px;\">\n  <div ng-style=\"{'background': msg.payload.color}\"\n       style=\"width:52px; height:52px; border-radius:50%; border:3px solid #344E41; background:#A3B18A;\"></div>\n  <div>\n    <div style=\"font-size:13px; color:#588157;\">Riesgo en 15 s</div>\n    <div style=\"font-size:24px; font-weight:700; color:#344E41;\">{{msg.payload.texto}}</div>\n  </div>\n</div>\n<div ng-repeat=\"b in [['Bajo', msg.payload.bajo, '#2ECC40'], ['Medio', msg.payload.medio, '#FFDC00'], ['Alto', msg.payload.alto, '#FF4136']]\"\n     style=\"display:flex; align-items:center; gap:8px; margin-top:6px; font-size:13px; color:#344E41;\">\n  <span style=\"width:48px;\">{{b[0]}}</span>\n  <div style=\"flex:1; height:8px; border-radius:4px; background:#DAD7CD; overflow:hidden;\">\n    <div ng-style=\"{'width': b[1] + '%', 'background': b[2]}\" style=\"height:100%;\"></div>\n  </div>\n  <span style=\"width:44px; text-align:right;\">{{b[1]}} %</span>\n</div>\n<div ng-style=\"msg.payload.anticipa ? {'background':'#FBE9E7', 'border':'1px solid #BC4749'} : {}\"\n     style=\"margin-top:10px; padding:4px 8px; border-radius:6px; font-size:12px; color:#344E41;\">{{msg.payload.nota}}</div>\n",
+    "storeOutMessages": true,
+    "fwdInMessages": false,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "className": "",
+    "x": 770,
+    "y": 800,
+    "wires": [
+      []
+    ]
+  }
+]
