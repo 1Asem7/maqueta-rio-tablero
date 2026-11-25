@@ -63,21 +63,9 @@ En **Control** aparece el selector **Auto / Manual / IA**. Para revisarlo sin el
 
 Importa `ia/node-red_pronostico_ia.json` en el editor (`https://rio.eparedes.dev`, pestaña **Nodo rio (wss)**): menú ☰ → **Import** → elige el archivo → **Import** → **Deploy**.
 
-Agrega en `/ui` la tarjeta **Pronóstico IA** con el modo del nodo, quién decide, y dos botones: **Modo IA** y **Modo automático**. El modo manual se sigue usando con el switch de "Control manual".
+El archivo usa los IDs de tu flujo del servidor (pestaña `83b62bfcec6df08a`, broker `4f9f99e7d18c27fc`), así que se conecta con el mismo usuario `nodered` y no cambia ningún nodo que ya tenías: solo agrega 12 nodos.
 
-Opcional: para que el texto "Modo" del grupo Estado diga IA, abre la función **separar datos** y debajo de
-```js
-if (d.modo == "manual") {
-    modo.payload = "MANUAL";
-}
-```
-agrega
-```js
-if (d.modo == "ia") {
-    modo.payload = "IA";
-}
-```
-y presiona **Deploy**.
+Agrega en `/ui` la tarjeta **Pronóstico IA** con el modo del nodo, quién decide, y dos botones: **Modo IA** y **Modo automático**. El modo manual se sigue usando con el switch de "Control manual". El texto "Modo:" del grupo Estado sigue diciendo AUTOMATICO cuando el nodo está en IA (ese nodo no se tocó); el modo real lo dice la tarjeta Pronóstico IA.
 
 ## 5. Colab
 
