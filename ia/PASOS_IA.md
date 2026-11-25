@@ -37,6 +37,11 @@ Abre el archivo en el editor. Busca el bloque que empieza con `user maquetaweb` 
 ```
 topic readwrite ucol-eq1/rio/nodo1/ia
 ```
+Y en el bloque `user nodered` agrega (para que Node-RED muestre el pronóstico):
+
+```
+topic read ucol-eq1/rio/nodo1/ia
+```
 Guarda con `Ctrl+O`, `Enter`, y sal con `Ctrl+X`. No cambies las demás líneas (las de `esp32` y `nodered` se quedan igual).
 
 **1.5 Recargar Mosquitto:**
@@ -60,6 +65,18 @@ git push -u origin ia-colab
 Sube la rama a GitHub. Luego, en github.com/1Asem7/maqueta-rio-tablero, abre el Pull Request de `ia-colab` y dale **Merge**. HubDeploy despliega `main`: si no se redespliega solo, lanza un deploy desde hub.eparedes.dev. En la página aparece la tarjeta **Pronóstico IA** debajo de Lluvia y humedad, con el texto "Esperando a la IA".
 
 Para revisarla antes, sin el nodo: `npm start` y abre `http://localhost:3000/?demo=1`.
+
+## 2b. Tarjeta de la IA en Node-RED
+
+El flujo está en `ia/node-red_pronostico_ia.json`. Ya trae los IDs de tu pestaña "Nodo rio" y de tu broker "Mosquitto local (nodered)", así que no hay que configurar nada más.
+
+1. Abre `https://rio.eparedes.dev` (el editor de Node-RED, no `/ui`) y entra a la pestaña **Nodo rio (wss)**.
+2. Menú ☰ (arriba a la derecha) → **Import** → **select a file to import** → elige `node-red_pronostico_ia.json` → **Import**. Suelta los nodos en un espacio libre.
+3. Si aparece "Some nodes already exist", elige **Import copy** únicamente si se duplicó algo tuyo. Lo normal es que no aparezca.
+4. Presiona **Deploy**.
+5. En `https://rio.eparedes.dev/ui` aparece una tarjeta nueva, **Pronóstico IA**, debajo de Estado, con "Esperando". Cuando corra Colab cambia cada segundo.
+
+Si la tarjeta se queda en "Esperando" mientras Colab sí publica, falta la línea `topic read ucol-eq1/rio/nodo1/ia` de `nodered` (paso 1.4).
 
 ## 3. Correr la IA en Colab
 
