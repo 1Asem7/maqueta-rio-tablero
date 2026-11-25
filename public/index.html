@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="styles.css?v=3.0.1">
+<link rel="stylesheet" href="styles.css?v=3.1.0">
 </head>
 <body>
 
@@ -185,9 +185,10 @@
           <span class="fila-nom">Modo</span>
           <span class="fila-val">
             <span id="eModoTxt">—</span>
-            <span class="switch compacto" id="eModo" data-on="false" aria-hidden="true">
-              <span class="switch-track"></span>
-              <span class="switch-knob"><i data-lucide="cpu" class="ico-off"></i><i data-lucide="hand" class="ico-on"></i></span>
+            <span class="modo-ico" id="eModo" data-modo="sin" aria-hidden="true">
+              <i data-lucide="cpu" class="m-auto"></i>
+              <i data-lucide="hand" class="m-manual"></i>
+              <i data-lucide="brain" class="m-ia"></i>
             </span>
           </span>
         </div>
@@ -222,13 +223,12 @@
       <article class="card" id="cardControl">
         <div class="ctl">
           <span class="ctl-nom"><i data-lucide="sliders-horizontal"></i>Modo</span>
-          <button class="switch" id="swModo" type="button" role="switch" aria-checked="false" aria-label="Modo manual" disabled>
-            <span class="switch-track">
-              <span class="switch-txt off">Automático</span>
-              <span class="switch-txt on">Manual</span>
-            </span>
-            <span class="switch-knob"><i data-lucide="cpu" class="ico-off"></i><i data-lucide="hand" class="ico-on"></i><span class="aro"></span></span>
-          </button>
+          <!-- Automático: reglas del firmware · Manual: valores y compuerta del tablero · IA: decide el modelo de Colab -->
+          <div class="segmentado modos" id="selModo" role="group" aria-label="Modo del nodo">
+            <button type="button" data-modo="auto" aria-pressed="false" title="Deciden las reglas del ESP32 con los sensores" disabled><i data-lucide="cpu"></i>Auto</button>
+            <button type="button" data-modo="manual" aria-pressed="false" title="Tú pones los valores y la compuerta" disabled><i data-lucide="hand"></i>Manual</button>
+            <button type="button" data-modo="ia" aria-pressed="false" title="Decide el modelo de IA que corre en Colab" disabled><i data-lucide="brain"></i>IA</button>
+          </div>
         </div>
 
         <hr>
@@ -345,8 +345,8 @@
 <script src="/vendor/lucide/lucide.min.js"></script>
 <script>window.lucide||document.write('<scr'+'ipt src="https://unpkg.com/lucide@1.55.0/dist/umd/lucide.min.js"><\/scr'+'ipt>');</script>
 
-<script src="escena.js?v=3.0.1"></script>
-<script src="ia.js?v=3.0.1"></script>
-<script src="app.js?v=3.0.1"></script>
+<script src="escena.js?v=3.1.0"></script>
+<script src="ia.js?v=3.1.0"></script>
+<script src="app.js?v=3.1.0"></script>
 </body>
 </html>

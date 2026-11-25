@@ -568,7 +568,26 @@ svg.candado{display:none;width:13px;height:13px;color:var(--text-3)}
 .ia-prob{display:none;font-size:12px;color:var(--text-2)}
 #iaOrigen[data-tipo="sensores"]{border-color:rgba(var(--rgb-sage),.6)}
 
-/* Botón "Simular crecida" (control, sólo en modo manual) */
+/* Selector de modo: Auto (reglas) / Manual / IA. Reusa el segmentado del historial */
+.modos button{display:flex;align-items:center;gap:5px;padding:6px 10px;transition:background 200ms, opacity 200ms}
+.modos button svg{width:14px;height:14px}
+.modos button[aria-pressed="true"] svg{color:var(--c-bone)}
+.modos button:disabled{cursor:not-allowed;opacity:.38}
+.modos button.pendiente{box-shadow:inset 0 0 0 1px var(--c-sage);animation:parpadeo 1s infinite}
+
+/* Ícono del modo en la tarjeta Estado */
+.modo-ico{width:28px;height:28px;display:grid;place-items:center;color:var(--c-sage)}
+.modo-ico svg{display:none;width:18px;height:18px;grid-area:1/1}
+.modo-ico[data-modo="auto"] .m-auto,
+.modo-ico[data-modo="manual"] .m-manual,
+.modo-ico[data-modo="ia"] .m-ia{display:block}
+.modo-ico[data-modo="sin"] .m-auto{display:block;color:var(--text-3)}
+
+/* Pronóstico IA cuando la IA controla el nodo */
+#iaOrigen[data-tipo="mando"]{border-color:var(--c-sage);background:linear-gradient(90deg, var(--c-hunter), var(--c-fern));color:var(--text-1)}
+#iaOrigen[data-tipo="respaldo"]{border-color:rgba(var(--rgb-mid),.6)}
+
+/* Botón "Simular crecida" (control, en modo manual o IA) */
 .btn-crecida{
   display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:36px;padding:0 12px;
   border-radius:var(--r-pill);border:1px solid var(--glass-border);background:var(--glass-fill);
@@ -607,7 +626,7 @@ svg.candado{display:none;width:13px;height:13px;color:var(--text-3)}
   .slider-val{font-size:20px}
   .ia-valor{font-size:22px}
   .ia-barras{gap:4px;margin-top:6px}
-  .ia-nota{margin-top:6px}
+  .ia-nota{margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 }
 @media (min-width:1280px) and (max-height:719px){
   :root{--hueco:10px;--pad-card:12px;--alto-graf:100px}
@@ -621,9 +640,9 @@ svg.candado{display:none;width:13px;height:13px;color:var(--text-3)}
   .btn-crecida{height:30px}
 }
 
-/* Portátiles de 720–799 px de alto: el pronóstico IA queda en una línea
+/* Portátiles de 720–849 px de alto: el pronóstico IA queda en una línea
    (sin barras) y el control sin separadores, para que las columnas quepan */
-@media (min-width:1280px) and (max-height:799px){
+@media (min-width:1280px) and (max-height:849px){
   :root{--hueco:10px}
   .card-cab{margin-bottom:6px}
   .anillo-nom{margin-top:4px}
@@ -632,7 +651,8 @@ svg.candado{display:none;width:13px;height:13px;color:var(--text-3)}
   .anillo-centro{font-size:22px}
   .ia-barras{display:none}
   .ia-prob{display:block}
-  .ia-nota{margin-top:4px}
+  .ia-nota{margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .riesgo-nota{margin-top:2px}
   #cardControl hr{display:none}
   .btn-crecida{height:30px}
   .fila{min-height:30px}
