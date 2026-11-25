@@ -40,7 +40,7 @@ With `npm start` (local or a Node host) `GET /api/config` can still override the
 - `public/escena.js`: the 3D scene only. It never reads sensors or computes risk.
 - `public/app.js`: the dashboard: MQTT, cards, controls, history, demo mode, "Simular crecida".
 - `public/ia.js`: the "Pronóstico IA" card. It only paints what the Colab notebook publishes on the `ia` topic; it never predicts. `app.js` feeds it through `window.IA.recibir()` and tells it the node's mode and who decides through `window.IA.nodo()` (chip "Al mando" / "Respaldo").
-- `ia/Proyecto_IA_Nodo_Rio.ipynb`: the AI (Google Colab). Simulated storms → 6 classifiers (XGBoost wins) that predict the firmware's risk 15 s ahead; section 9 runs it live: subscribes to `datos`, publishes to `ia`. In AI mode the firmware obeys that forecast. `ia/PASOS_IA.md` has the server/Colab/demo steps.
+- `ia/Proyecto_IA_Nodo_Rio.ipynb`: the AI (Google Colab). It reads `ia/dataset_nodo_rio.csv` (1,808 readings of 12 simulated storms with some nulls/duplicates, made by `ia/crear_dataset.py`; local file in Colab or the raw GitHub URL on `main`) → 6 classifiers (XGBoost wins on the test split) that predict the firmware's risk 15 s ahead; section 9 runs it live: subscribes to `datos`, publishes to `ia`. In AI mode the firmware obeys that forecast. `ia/PASOS_IA.md` has the server/Colab/demo steps.
 - `public/simulador.html`: the previous standalone simulator (sliders, flood simulation, exploded view, OBJ export), kept untouched as a legacy copy. The dashboard does not use it.
 
 `escena.js` and `app.js` are each wrapped in an IIFE and **each has its own `CONFIG`**: model dimensions in `escena.js`, topics/broker/thresholds in `app.js`. The only link between them is `window.Escena`.
