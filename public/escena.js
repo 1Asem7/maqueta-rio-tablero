@@ -4,8 +4,9 @@
    ESCENA 3D DE LA MAQUETA DIGITAL
    Este archivo sólo dibuja el modelo. No lee sensores ni calcula el riesgo:
    app.js recibe los datos del nodo por MQTT y mueve la escena con window.Escena
-   (fijarNivel, fijarCompuerta, fijarBuzzer, fijarLluvia, mostrarComponentes,
-   restablecerVista). La geometría es la de la maqueta v2.3, sin cambios.
+   (fijarNivel, fijarCompuerta, fijarBuzzer, fijarLed, fijarLluvia,
+   mostrarComponentes, restablecerVista). La geometría es la de la maqueta
+   física terminada (v3.0).
    ========================================================================== */
 if (!window.THREE) {
   document.getElementById('escena').classList.add('sin-webgl');
@@ -13,125 +14,141 @@ if (!window.THREE) {
 }
 
 /* ============================================================================
-   MAQUETA VIRTUAL v2.3 · SISTEMA IoT DE ALERTA TEMPRANA POR NIVEL DE RÍO (COLIMA)
-   Nodo único ESP32-WROOM-32 DevKit V1 (30 pines) sobre protoboard de 830 puntos.
+   MAQUETA VIRTUAL v3.0 · SISTEMA IoT DE ALERTA TEMPRANA POR NIVEL DE RÍO (COLIMA)
+   Reconstruida a partir de las fotos de la maqueta física terminada.
 
-   FORMATO COMPACTO: 45 cm de largo × 25 cm de ancho × ≈ 20 cm de alto.
-   Se conserva todo lo de la v2.1 (río incrustado, HC-SR04 colgado del puente,
-   compuerta abatible que también es vertedero, canaleta y tóper colgado) y se
-   reacomoda para que quepa en un escritorio y se pueda cargar a mano.
+   SISTEMA DE COORDENADAS
+     1 unidad = 1 cm. y = 0 es la cara de arriba del triplay.
+     Las medidas se escriben "en la tabla": xb desde el borde izquierdo (lado del
+     nacimiento) y zb desde el borde trasero. X(xb) y Z(zb) las pasan a la escena,
+     que tiene el origen en el centro de la tabla y +Z hacia el frente (lado del
+     servo, el farol y el HW-080).
 
-   PRESUPUESTO DE ALTURA (desde la mesa)
-     patas 6.5 + MDF 0.9 + bloque de 3" 7.5 + sierra 2 × 2.5 = 19.9 cm
-     El puente y la caseta llegan a ~20.3 cm. Los árboles se limitan a la cota
-     de la sierra para que nada pase de ahí.
+   CÓMO SE SACARON LAS MEDIDAS
+     Fotos con referencias conocidas: protoboard de 830 (16.5 cm), ESP32 DevKit
+     (5.1 × 2.8 cm), servo MG995 y el unicel nominal de 12.7 cm.
 
-   QUÉ CAMBIÓ RESPECTO A LA v2.1
-   1. Tabla de 45 × 25 cm (antes 60 × 30) y patas de 6.5 cm (antes 13).
-   2. Sierra de 2 capas de 1" (antes 4) y terraza de 1 capa.
-   3. Canal de 24.4 × 6 × 6 cm interior (antes 37 × 8 × 6). La profundidad no
-      cambia, así que la calibración 1 cm de columna = 80 cm de río se conserva.
-   4. HC-SR04 a 3.0 cm del borde (antes 5.2). Lee 9.0 cm con el río vacío y
-      4.0 cm con la columna máxima de 5 cm (el HC-SR04 mide desde ~2 cm). Con un
-      cono de ~30° la huella mide 1.6 cm en el borde y 4.8 cm en el fondo,
-      dentro del canal de 6 cm.
-   5. Tóper de 12 × 14 × 6.5 cm (~1.1 L) con 0.8 L de agua. Con la bomba
-      encendida el río nunca pasa de 250 cm (en ALTO el relé la apaga), así que
-      en el tóper quedan al menos ~2.3 cm de agua para la bomba; con el río
-      vacío el agua queda ~0.9 cm abajo del borde.
-   6. La manguera va por una ranura en la cara inferior del unicel: el MDF ya no
-      lleva perforaciones y debajo de la tabla sólo cuelga el tóper.
+   QUÉ CAMBIÓ RESPECTO A LA v2.3
+   1. Tabla de triplay de 46.5 × 25 × 1.15 cm y patas de 4.9 × 4.9 × 6.7 cm.
+   2. Un solo bloque de unicel de 12.7 cm (3″ + 2 × 1″) forrado de cartulina
+      blanca, con fibra verde arriba y en la cara de la compuerta. Ya no hay
+      sierra escalonada: sólo una franja de fibra encimada al frente.
+   3. El río es un contenedor de plástico transparente de 19.5 × 10.8 cm, con
+      fondo café y un banco de arena, apoyado en el triplay.
+   4. Sin canaleta: la compuerta está en la cara del bloque y suelta el agua
+      directo al tóper, que cuelga justo abajo. Cerrada no rebasa (la hoja
+      llega a 10.1 cm y la columna máxima es de 5 cm).
+   5. Servo MG995 en un abatelenguas parado, con fuente externa de 5 V.
+   6. Farol con el LED RGB, placa de lluvia en el techo de la casa y HW-080 en
+      un hoyo con tierra.
+   7. Toda la electrónica va debajo de la tabla: 2 protoboards, ESP32, LM393,
+      buzzer y el relé junto al tóper. El firmware no tiene salida de relé:
+      la bomba siempre recircula.
 
-   RESTRICCIÓN ELÉCTRICA (sin cambios): los sensores analógicos van a GPIO34 y
-   GPIO35, del ADC1. El ADC2 queda inutilizable en cuanto se activa el WiFi.
+   PINES (firmware y diagrama «Propuesta A v3»)
+     HC-SR04 TRIG 33 · ECHO 32 (divisor 1 kΩ / 2 kΩ) · lluvia AO 34 ·
+     humedad AO 35 · LED RGB R 27 G 26 B 25 · buzzer pasivo 14 · servo 13.
+     Los sensores analógicos van al ADC1: el ADC2 no sirve con el WiFi activo.
    ========================================================================== */
 
-// ===== CONFIG (todo lo ajustable vive aquí) =====
+// ===== CONFIG (todo lo ajustable vive aquí; medidas en cm de la tabla) =====
 const CONFIG = {
-  base:  { x: 45, z: 25, espesor: 0.9 },          // tabla MDF 9 mm, cara superior en y = 0
-  patas: { alto: 6.5, lado: 3.0, x: 21.0, z: 11.0 },    // centros de las 4 patas (esquinas)
+  base:   { largo: 46.5, ancho: 25, espesor: 1.15 },
+  patas:  { lado: 4.9, alto: 6.7 },
+  fibra:  0.6,                                    // fibra verde (tipo esponja)
+  // unicel 3″ + 2 × 1″ = 12.7 cm; las paredes blancas van de -1.2 a 26.65 (sobresale 1.2 cm a la izquierda)
+  bloque: { x0: -1.2, x1: 26.65, cara: 27.25, alto: 12.7, pared: 0.5 },
+  franja: { espesor: 0.4 },                       // fibra encimada al frente del bloque
+  rio:    { x0: 7.8, x1: 27.3, z0: 4.0, z1: 14.8, alto: 12.15, pared: 0.15, piso: 0.2, labio: 1.2 },
+  compuerta: { x: 27.5, yEje: 11.6, z0: 4.1, z1: 14.9, yInf: 1.25, barra: 1.5, espesor: 0.25 },
+  servo:  { x: 28.3, z: 17.45, y: 10.45 },        // MG995: el eje de salida mira hacia atrás (−z)
+  toper:  { x0: 27.8, x1: 41.2, z0: 1.0, z1: 14.6, fondo: -7.45, angosto: 0.8, pared: 0.12, litros: 1.0 },
+  puente: { x0: 11.0, x1: 15.1, z0: 2.5, z1: 16.9 },
+  farol:  { x: 24.7, z: 15.7, poste: 4.9, cabeza: [3.2, 4.5, 3.2] },
+  yl69:   { x: 18.0, z: 18.6, hoyo: 3.1 },
+  casa:   { x: 2.9, z: 8.4 },
+  placa:  { x: 2.0, z: 6.0 },
+  casita: { x: 35.2, z: 20.3 },
+  nacimiento: { x: 6.3, z: 10.6 },
+  bomba:  { x: 36.0, z: 3.3 },
+  rele:   { x: 44.1, z: 11.65 },
+  proto:  { x0: 2.6, z0: 5.75 },                  // esquina de las 2 protoboards (bajo la tabla)
 
-  terreno: {
-    xMin: -22.5, xMax: 5.5,      // bloque de unicel del paisaje: 28 × 25 cm
-    yCama: 7.5,                  // primer bloque (3") = cota de la llanura = borde del río
-    paso: 2.5,                   // capas de 1" para la sierra y la terraza
-    capasSierra: 2, zTerraza: 8.9
-  },
-
-  canal: {                       // caja de acrílico incrustada en la zanja
-    x0: -18.5, x1: 5.9,          // asoma 4 mm del unicel: ahí cierra la compuerta
-    zc: -3, anchoInt: 6, altoInt: 6, pared: 0.3,
-    pisoY: 1.5                   // fondo interior: 1.2 cm de unicel + 3 mm de acrílico
-  },
-
-  compuerta: { x: 6.1, ancho: 6.4, cresta: 4.0, ejeSobreBorde: 0.8 },  // cresta a 4 cm del fondo
-  canaleta:  { x0: 5.5, largo: 3.5, yInicio: 1.0, caida: 1.0, anchoInt: 7.6, altoPared: 2.5 },
-
-  puente: { x: -10, z0: -9.4, z1: 3.4, ancho: 3.2, sensorSobreBorde: 3.0 },
-
-  bahia: {
-    reservorio: { x0: 7.0, x1: 19.0, z0: -11.2, z1: 2.8, prof: 6.5 },  // tóper 12 × 14 × 6.5 cm colgado bajo el MDF
-    seco:       { x0: 5.7, x1: 22.3, z0: 3.7, z1: 12.4, tarima: 1.2 },
-    litros: 0.8                                                       // agua total del circuito
-  },
-
-  sim: {
-    nivelMax: 400,        // cm reales que representa el sistema
-    columnaMax: 5.0       // cm de agua en el río equivalentes a nivelMax
-  },
+  sensor: { distVacio: 13.7, distLleno: 8.7 },    // calibración del firmware (cm)
+  sim:    { nivelMax: 400 },                      // cm reales que representa el sistema
 
   camara: {
     fov: 38, cerca: 0.1, lejos: 900, msVista: 800,
-    distMin: 34, distMax: 300,            // límites del zoom
+    distMin: 34, distMax: 300,                    // límites del zoom
     nieblaCerca: 170, nieblaLejos: 560
   },
 
   // Encuadre inicial: desde dónde se mira y cuánto mide el modelo visto así
   // (en cm, ya proyectado), para que quepa en la zona libre entre tarjetas.
-  vista: { dir: [59, 46, 57], objetivo: [1.5, -2.0, -1.6], ancho: 50, alto: 46, margen: 0.9 },
+  // v3.0: más alto que la v2.3 (~45°) para ver el río, que va 8–12 cm abajo dentro del bloque.
+  vista: { dir: [48, 66, 46], objetivo: [-0.6, 3.0, 0.5], ancho: 54, alto: 52, margen: 0.9 },
 
   anim: { msNivel: 600, msCompuerta: 500 },
 
-  lluvia: { gotas: 220, alto: 26, largo: 0.9 },   // gotas con lluvia al 100 %
+  lluvia: { gotas: 240, alto: 32, largo: 0.9 },   // gotas con lluvia al 100 %
 
   colores: {
-    fondo: 0x1d2b24, hueso: 0xdad7cd,     // --bg-deep y --c-bone de la página
-    haloMedio: 0xdda15e, haloAlto: 0xbc4749,
-    mdf: 0xb08a5c, llanura: 0x94a173, unicel: 0xd8d2bf,
-    acrilico: 0xa9cfe0, agua: 0x2380c0,
-    blanco: 0xf1eee2, hormigon: 0xd2cec3, metal: 0x9aa0a6, negro: 0x2b3036,
-    pcb: 0x1f6f8b, protoboard: 0xf0ede3, teja: 0xa2604a, pvc: 0xd9d6cd
+    fondo: 0x1d2b24, hueso: 0xdad7cd,             // --bg-deep y --c-bone de la página
+    ledBajo: 0xa3b18a, haloMedio: 0xdda15e, haloAlto: 0xbc4749,   // --risk-low / mid / high
+    ledApagado: 0x3a3f45
   },
 
-  cable: { v5: 0xcc3b2b, gnd: 0x24282c, dato: 0x2f6f9e, dato2: 0xd79a1e, dato3: 0x6d9c4a }
+  cable: { v5: 0xcc3b2b, gnd: 0x24282c }
 };
-
-// ===== UMBRALES DE NIVEL =====
-// Sólo pintan las marcas de la regleta de aforo. El riesgo lo calcula el
-// firmware; la página lo lee del tópico de datos.
-const UMBRALES = { nivelBajo: 150, nivelMedio: 250 };
 
 // ===== UTILIDADES =====
 const limitar = (v, a, b) => Math.max(a, Math.min(b, v));
 const mezclar = (a, b, t) => a + (b - a) * t;
 function suavizar(a, b, x) { const t = limitar((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); }
 function suaveInOut(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+const fmt = n => (Math.round(n * 10) / 10).toString();
 
 // PRNG determinista (LCG): la maqueta se ve idéntica en cada carga
-let _semilla = 20261005;
+let _semilla = 20261124;
 function aleatorio() { _semilla = (_semilla * 1664525 + 1013904223) % 4294967296; return _semilla / 4294967296; }
 function entre(a, b) { return a + (b - a) * aleatorio(); }
 
+// De "cm desde el borde izquierdo / trasero" a coordenadas de la escena
+const X = xb => xb - CONFIG.base.largo / 2;
+const Z = zb => zb - CONFIG.base.ancho / 2;
+const V = (xb, y, zb) => new THREE.Vector3(X(xb), y, Z(zb));
+
+// Alturas y atajos que se usan en todos lados
+const B = CONFIG.base, K = CONFIG.rio, CP = CONFIG.compuerta, TP = CONFIG.toper, PT = CONFIG.puente;
+const BL = CONFIG.bloque, PW = BL.pared;
+const yTope = BL.alto + CONFIG.fibra;                     // 13.3: arriba del bloque
+const xCara = BL.cara, xIzq = BL.x0;                      // cara de la compuerta y borde izquierdo del bloque
+const yBajo = CONFIG.fibra;                               // 0.6: arriba de la zona baja
+const yMesa = -B.espesor - CONFIG.patas.alto;             // -7.85
+const zcRio = Z((K.z0 + K.z1) / 2);                       // centro del río en la escena
+const anchoIntRio = K.z1 - K.z0 - 2 * K.pared;            // 10.5
+const xIntRio0 = K.x0 + K.pared, xIntRio1 = K.x1;         // el extremo de aguas abajo lo cierra la compuerta
+
 /* ===== TABLA DE CALIBRACIÓN =====
-   El simulador trabaja en cm REALES de río; la maqueta los representa con la
-   columna de agua del canal. El HC-SR04 mide la distancia desde su cara hasta
-   el agua, así que: columna = distanciaVacio − distanciaLeida. */
-const yCaraSensor = CONFIG.terreno.yCama + CONFIG.puente.sensorSobreBorde;   // 10.5
-function columnaDesdeNivel(nivelCm) {
-  return limitar(nivelCm / CONFIG.sim.nivelMax, 0, 1) * CONFIG.sim.columnaMax;
-}
-function yAguaCanal(nivelCm) { return CONFIG.canal.pisoY + columnaDesdeNivel(nivelCm); }
+   El HC-SR04 mide de su cara al agua: vacío 13.7 cm, lleno 8.7 cm (5 cm de
+   columna ≡ 400 cm de río). columna = distVacio − distanciaLeída. */
+const yCaraSensor = K.piso + CONFIG.sensor.distVacio;     // 13.9 (0.6 cm arriba del bloque)
+const columnaMax = CONFIG.sensor.distVacio - CONFIG.sensor.distLleno;   // 5 cm
+function columnaDesdeNivel(nivelCm) { return limitar(nivelCm / CONFIG.sim.nivelMax, 0, 1) * columnaMax; }
+function yAguaCanal(nivelCm) { return K.piso + columnaDesdeNivel(nivelCm); }
 function distanciaSensor(nivelCm) { return yCaraSensor - yAguaCanal(nivelCm); }
+
+// Franja de fibra del frente (borde ondulado, cm desde atrás)
+function bordeFranja(xb) { return 21.0 - 0.07 * xb + 0.55 * Math.sin(xb * 0.33 + 0.4) + 0.3 * Math.sin(xb * 0.81 + 1.3); }
+// ¿El punto cae dentro del contenedor del río?
+function enZanja(xb, zb) { return xb >= K.x0 && xb <= K.x1 && zb > K.z0 && zb < K.z1; }
+// Cota de la superficie en un punto de la tabla: para posar árboles, casas y postes
+function cotaTerreno(xb, zb) {
+  if (xb > xCara) return (xb >= TP.x0 && xb <= TP.x1 && zb >= TP.z0 && zb <= TP.z1) ? 0 : yBajo;
+  if (enZanja(xb, zb)) return K.piso;
+  return yTope + (zb > bordeFranja(xb) ? CONFIG.franja.espesor : 0);
+}
+
 // ===== ESCENA, CÁMARA, RENDER =====
 // El lienzo es transparente: detrás se ve el degradado de la página, que es
 // lo que difuminan las tarjetas de vidrio. La niebla funde el modelo con él.
@@ -222,74 +239,133 @@ controles.autoRotate = false;
 // El relleno toma el hueso de la paleta para que el modelo se funda con el fondo.
 escena.add(new THREE.HemisphereLight(CONFIG.colores.hueso, 0x6d7a63, 0.9));
 const sol = new THREE.DirectionalLight(0xfff4e2, 0.82);
-sol.position.set(24, 36, 19);
+sol.position.set(24, 40, 22);
 sol.castShadow = true;
-sol.shadow.mapSize.set(1024, 1024);
-sol.shadow.camera.left = -30; sol.shadow.camera.right = 30;
-sol.shadow.camera.top = 24; sol.shadow.camera.bottom = -24;
-sol.shadow.camera.near = 1; sol.shadow.camera.far = 140;
-sol.shadow.bias = -0.0016;
+sol.shadow.mapSize.set(1536, 1536);
+sol.shadow.camera.left = -34; sol.shadow.camera.right = 34;
+sol.shadow.camera.top = 28; sol.shadow.camera.bottom = -28;
+sol.shadow.camera.near = 1; sol.shadow.camera.far = 150;
+sol.shadow.bias = -0.0012;
 escena.add(sol, sol.target);
 
+/* ===== TEXTURAS PROCEDURALES (canvas): fibra, triplay, malla, arena… =====
+   Se pintan con el LCG, así que salen iguales en cada carga. */
+function texturaCanvas(tam, pintar, rep) {
+  const c = document.createElement('canvas'); c.width = c.height = tam;
+  pintar(c.getContext('2d'), tam);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  if (rep) t.repeat.set(rep[0], rep[1]);
+  return t;
+}
+function motas(ctx, tam, base, colores, n, rMin, rMax) {
+  ctx.fillStyle = base; ctx.fillRect(0, 0, tam, tam);
+  for (let i = 0; i < n; i++) {
+    ctx.fillStyle = colores[i % colores.length];
+    ctx.globalAlpha = entre(0.25, 0.8);
+    const r = entre(rMin, rMax);
+    ctx.fillRect(entre(0, tam), entre(0, tam), r, r * entre(0.4, 1.6));
+  }
+  ctx.globalAlpha = 1;
+}
+const TEX = {
+  fibra:     texturaCanvas(256, (c, s) => motas(c, s, '#2f4a43', ['#4d6b62', '#223a34', '#6f8c84', '#3c5a51', '#8aa39b'], 5200, 1, 3.2), [0.11, 0.11]),
+  fibraCara: texturaCanvas(256, (c, s) => motas(c, s, '#2f4a43', ['#4d6b62', '#223a34', '#6f8c84', '#3c5a51'], 5200, 1, 3.2), [1, 1]),
+  follaje:   texturaCanvas(128, (c, s) => motas(c, s, '#245f28', ['#3a8a36', '#173f1b', '#4fa046', '#1f5222', '#2f7a30'], 2600, 1, 3), [3, 3]),
+  arena:     texturaCanvas(128, (c, s) => motas(c, s, '#b9a37a', ['#d6c49c', '#8f7b57', '#e8dcc0', '#6e5f45'], 2600, 0.6, 1.6), [0.25, 0.25]),
+  foam:      texturaCanvas(128, (c, s) => motas(c, s, '#eceef0', ['#e2e5e8', '#f6f7f8', '#dfe2e5'], 900, 2, 6), [0.08, 0.08]),
+  triplay:   texturaCanvas(256, (c, s) => {
+    c.fillStyle = '#9c6b45'; c.fillRect(0, 0, s, s);
+    for (let i = 0; i < 70; i++) {
+      c.strokeStyle = i % 2 ? 'rgba(120,78,46,.35)' : 'rgba(170,120,80,.3)';
+      c.lineWidth = entre(1, 3);
+      c.beginPath(); const y = entre(0, s);
+      c.moveTo(0, y); c.bezierCurveTo(s * .3, y + entre(-8, 8), s * .7, y + entre(-8, 8), s, y + entre(-4, 4)); c.stroke();
+    }
+  }, [0.06, 0.06]),
+  canto: texturaCanvas(64, (c, s) => {                   // capas del triplay vistas de canto
+    const capas = ['#e5d3b2', '#cdb48c', '#e9dabd', '#c9ae85', '#e2cfaa'];
+    for (let i = 0; i < 5; i++) { c.fillStyle = capas[i]; c.fillRect(0, i * s / 5, s, s / 5); }
+    c.fillStyle = 'rgba(90,60,30,.5)';
+    for (let i = 1; i < 5; i++) c.fillRect(0, i * s / 5 - 1, s, 1.5);
+  }, [1, 1]),
+  malla: texturaCanvas(128, (c, s) => {                  // hoja de la compuerta (malla tipo tapete)
+    c.fillStyle = '#6c6f73'; c.fillRect(0, 0, s, s);
+    c.strokeStyle = '#3d4044'; c.lineWidth = 2;
+    for (let i = -s; i < 2 * s; i += 10) {
+      c.beginPath(); c.moveTo(i, 0); c.lineTo(i + s, s); c.stroke();
+      c.beginPath(); c.moveTo(i, s); c.lineTo(i + s, 0); c.stroke();
+    }
+    c.fillStyle = 'rgba(220,225,230,.18)';
+    for (let i = 0; i < 260; i++) c.fillRect(entre(0, s), entre(0, s), 2, 2);
+  }, [2.5, 2.5]),
+  peine: texturaCanvas(128, (c, s) => {                  // placa de lluvia: pistas en peine
+    c.fillStyle = '#1d2226'; c.fillRect(0, 0, s, s);
+    c.fillStyle = '#c9cdd1';
+    for (let i = 0; i < 12; i++) c.fillRect(8, 8 + i * 9.5, s - 16, 3.2);
+    c.fillRect(6, 6, 4, s - 12); c.fillRect(s - 10, 6, 4, s - 12);
+  }, [1, 1])
+};
+
 // ===== MATERIALES COMPARTIDOS =====
-const C = CONFIG.colores;
+const Ph = o => new THREE.MeshPhongMaterial(o);
 const MAT = {
-  mdf:       new THREE.MeshPhongMaterial({ color: C.mdf, shininess: 12 }),
-  llanura:   new THREE.MeshPhongMaterial({ color: C.llanura, shininess: 3, flatShading: true }),
-  unicel:    new THREE.MeshPhongMaterial({ color: C.unicel, shininess: 4 }),
-  lecho:     new THREE.MeshPhongMaterial({ color: 0x8f8268, shininess: 4 }),
-  sierra:    [],   // se rellena por capa, de verde a ocre según la cota
-  acrilico:  new THREE.MeshPhongMaterial({ color: C.acrilico, shininess: 100, specular: 0xffffff, transparent: true, opacity: 0.34, side: THREE.DoubleSide }),
-  aristaAcr: new THREE.LineBasicMaterial({ color: 0x4f8fb2, transparent: true, opacity: 0.75 }),
-  agua:      new THREE.MeshPhongMaterial({ color: C.agua, shininess: 95, specular: 0xa8ddf5, transparent: true, opacity: 0.8, side: THREE.DoubleSide }),
-  lamina:    new THREE.MeshPhongMaterial({ color: 0x4aa3dc, shininess: 80, specular: 0xcfeeff, transparent: true, opacity: 0.68, side: THREE.DoubleSide, depthWrite: false }),
-  pvc:       new THREE.MeshPhongMaterial({ color: C.pvc, shininess: 30 }),
-  madera:    new THREE.MeshPhongMaterial({ color: 0xba9160, shininess: 10 }),
-  pata:      new THREE.MeshPhongMaterial({ color: 0x9c7a52, shininess: 10 }),
-  tarima:    new THREE.MeshPhongMaterial({ color: 0xd8d3c5, shininess: 14 }),
-  blanco:    new THREE.MeshPhongMaterial({ color: C.blanco, shininess: 18 }),
-  hormigon:  new THREE.MeshPhongMaterial({ color: C.hormigon, shininess: 6, flatShading: true }),
-  metal:     new THREE.MeshPhongMaterial({ color: C.metal, shininess: 70, specular: 0x666666 }),
-  metalOsc:  new THREE.MeshPhongMaterial({ color: 0x6d757c, shininess: 50 }),
-  negro:     new THREE.MeshPhongMaterial({ color: C.negro, shininess: 25 }),
-  pcb:       new THREE.MeshPhongMaterial({ color: C.pcb, shininess: 30 }),
-  pcbVerde:  new THREE.MeshPhongMaterial({ color: 0x2f6b3c, shininess: 30 }),
-  protoboard:new THREE.MeshPhongMaterial({ color: C.protoboard, shininess: 22 }),
-  rojo:      new THREE.MeshPhongMaterial({ color: 0xcc3b2b, shininess: 30 }),
-  naranja:   new THREE.MeshPhongMaterial({ color: 0xd79a1e, shininess: 30 }),
-  tierra:    new THREE.MeshPhongMaterial({ color: 0x6b4f36, shininess: 2, flatShading: true }),
-  tronco:    new THREE.MeshPhongMaterial({ color: 0x8a6a4a, shininess: 3, flatShading: true }),
-  copaA:     new THREE.MeshPhongMaterial({ color: 0x5e7a4a, shininess: 3, flatShading: true }),
-  copaB:     new THREE.MeshPhongMaterial({ color: 0x6f8c56, shininess: 3, flatShading: true }),
-  roca:      new THREE.MeshPhongMaterial({ color: 0xa8a294, shininess: 5, flatShading: true }),
-  arbusto:   new THREE.MeshPhongMaterial({ color: 0x6f8659, shininess: 3, flatShading: true }),
-  muro:      new THREE.MeshPhongMaterial({ color: 0xece7dc, shininess: 8 }),
-  teja:      new THREE.MeshPhongMaterial({ color: C.teja, shininess: 8, flatShading: true }),
-  vidrio:    new THREE.MeshPhongMaterial({ color: 0xbcd6e2, shininess: 90, transparent: true, opacity: 0.55 }),
+  triplay:   Ph({ map: TEX.triplay, shininess: 10 }),
+  canto:     Ph({ map: TEX.canto, shininess: 8 }),
+  pata:      Ph({ color: 0xe9d7ae, shininess: 8 }),
+  fibra:     Ph({ map: TEX.fibra, shininess: 2 }),
+  fibraCara: Ph({ map: TEX.fibraCara, shininess: 2 }),
+  foam:      Ph({ map: TEX.foam, color: 0xffffff, shininess: 12 }),
+  unicel:    Ph({ color: 0xe9e6dc, shininess: 4 }),
+  plastico:  Ph({ color: 0xcfe3ea, shininess: 110, specular: 0xffffff, transparent: true, opacity: 0.26, side: THREE.DoubleSide, depthWrite: false }),
+  aristaPl:  new THREE.LineBasicMaterial({ color: 0x8fb3c2, transparent: true, opacity: 0.85 }),
+  aristaTp:  new THREE.LineBasicMaterial({ color: 0xa9bcc4, transparent: true, opacity: 0.8 }),
+  fondoRio:  Ph({ color: 0x4b3a2c, shininess: 6 }),
+  arena:     Ph({ map: TEX.arena, shininess: 4 }),
+  agua:      Ph({ color: 0x2b86c4, shininess: 95, specular: 0xa8ddf5, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false }),
+  lamina:    Ph({ color: 0x4aa3dc, shininess: 80, specular: 0xcfeeff, transparent: true, opacity: 0.62, side: THREE.DoubleSide, depthWrite: false }),
+  malla:     Ph({ map: TEX.malla, shininess: 20 }),
+  abate:     Ph({ color: 0xe6cda3, shininess: 10 }),        // abatelenguas / palito de madera
+  brocheta:  Ph({ color: 0xe2c896, shininess: 10 }),
+  carton:    Ph({ color: 0xd3b88a, shininess: 6 }),         // tablero del puente
+  barandal:  Ph({ color: 0x8a5a33, shininess: 8, side: THREE.DoubleSide }),
+  blanco:    Ph({ color: 0xf3f2ee, shininess: 16 }),
+  negro:     Ph({ color: 0x24282c, shininess: 30 }),
+  grisFarol: Ph({ color: 0x4d545c, shininess: 20 }),
+  vidrio:    Ph({ color: 0xdde8ee, shininess: 100, transparent: true, opacity: 0.35, depthWrite: false }),
+  metal:     Ph({ color: 0xb7bcc1, shininess: 80, specular: 0x777777 }),
+  metalOsc:  Ph({ color: 0x6d757c, shininess: 50 }),
+  pcbAzul:   Ph({ color: 0x1f5f9e, shininess: 30 }),
+  pcbNegro:  Ph({ color: 0x1c1f22, shininess: 30 }),
+  protoboard:Ph({ color: 0xf1eee6, shininess: 22 }),
+  tierra:    Ph({ color: 0x5a3f2c, shininess: 3, flatShading: true }),
+  tronco:    Ph({ color: 0x5c4130, shininess: 3 }),
+  follaje:   Ph({ map: TEX.follaje, color: 0xffffff, shininess: 2 }),
+  follaje2:  Ph({ map: TEX.follaje, color: 0xe2f5dc, shininess: 2 }),
+  muro:      Ph({ color: 0xf2efe6, shininess: 8 }),
+  ventana:   Ph({ color: 0x3a3631, shininess: 4 }),
+  puerta:    Ph({ color: 0xe8b890, shininess: 4 }),
+  peine:     Ph({ map: TEX.peine, shininess: 60 }),
+  toper:     Ph({ color: 0xdfe9ee, shininess: 90, transparent: true, opacity: 0.32, side: THREE.DoubleSide, depthWrite: false }),
+  bomba:     Ph({ color: 0xeeeeea, shininess: 40 }),
+  manguera:  Ph({ color: 0xd7dccf, shininess: 70, transparent: true, opacity: 0.75 }),
   mesa:      new THREE.ShadowMaterial({ opacity: 0.34 }),   // sólo la sombra: debajo se ve el fondo de la página
   flecha:    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95 }),
+  // El buzzer va bajo la tabla: su halo se ve de lado, entre las patas
   halo:      new THREE.MeshBasicMaterial({ color: CONFIG.colores.haloAlto, transparent: true, opacity: 0, depthWrite: false, fog: false }),
   guia:      new THREE.LineBasicMaterial({ color: CONFIG.colores.hueso, transparent: true, opacity: 0.45 })   // guías y cotas
 };
-(function paletaSierra() {                          // capas: verde abajo, ocre arriba
-  const a = new THREE.Color(0x8a9a6e), b = new THREE.Color(0xb9b492);
-  for (let i = 0; i <= CONFIG.terreno.capasSierra; i++) {
-    MAT.sierra.push(new THREE.MeshPhongMaterial({
-      color: a.clone().lerp(b, i / CONFIG.terreno.capasSierra), shininess: 3, flatShading: true
-    }));
-  }
-})();
 
 // ===== GRUPOS (una capa por tipo de pieza) =====
-const grupoTerreno      = new THREE.Group(); grupoTerreno.name = 'base_patas_y_relieve';
-const grupoCanal        = new THREE.Group(); grupoCanal.name = 'canal_acrilico';
+const grupoTerreno      = new THREE.Group(); grupoTerreno.name = 'base_patas_y_bloque';
+const grupoCanal        = new THREE.Group(); grupoCanal.name = 'rio_contenedor';
 const grupoAgua         = new THREE.Group(); grupoAgua.name = 'agua';
 const grupoFlujo        = new THREE.Group(); grupoFlujo.name = 'flechas_de_flujo';
 const grupoAmbientacion = new THREE.Group(); grupoAmbientacion.name = 'ambientacion';
 const grupoPuente       = new THREE.Group(); grupoPuente.name = 'puente_y_compuerta';
 const grupoSensores     = new THREE.Group(); grupoSensores.name = 'sensores_y_cableado';
 const grupoActuadores   = new THREE.Group(); grupoActuadores.name = 'actuadores';
-const grupoBahia        = new THREE.Group(); grupoBahia.name = 'bahia_tecnica';
+const grupoBahia        = new THREE.Group(); grupoBahia.name = 'toper_y_electronica';
 const grupoGuias        = new THREE.Group(); grupoGuias.name = 'guias_etiquetas';
 const grupoCotas        = new THREE.Group(); grupoCotas.name = 'cotas_generales';
 escena.add(grupoTerreno, grupoCanal, grupoAgua, grupoFlujo, grupoAmbientacion, grupoPuente,
@@ -309,6 +385,10 @@ function caja(w, h, d, mat, x, y, z, nombre) {
   if (nombre) m.name = nombre;
   return m;
 }
+// Caja dada por sus límites en cm de la tabla
+function bloque(xb0, xb1, y0, y1, zb0, zb1, mat, nombre) {
+  return caja(xb1 - xb0, y1 - y0, zb1 - zb0, mat, X((xb0 + xb1) / 2), (y0 + y1) / 2, Z((zb0 + zb1) / 2), nombre);
+}
 function cilindro(rt, rb, h, seg, mat, x, y, z, nombre) {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat);
   m.position.set(x, y, z);
@@ -316,303 +396,741 @@ function cilindro(rt, rb, h, seg, mat, x, y, z, nombre) {
   if (nombre) m.name = nombre;
   return m;
 }
-// Caja de unicel con un material por cara: [+X, −X, +Y, −Y, +Z, −Z]
-function bloque(x0, x1, y0, y1, z0, z1, mats, nombre) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), mats);
-  m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-  m.castShadow = true; m.receiveShadow = true;
-  m.name = nombre;
+// Losa horizontal a partir de un contorno [[xb, zb], ...] (con huecos opcionales).
+// mats = [tapas, cantos]
+function losa(contorno, y0, espesor, mats, nombre, huecos) {
+  const forma = new THREE.Shape();
+  contorno.forEach(([xb, zb], i) => i ? forma.lineTo(X(xb), -Z(zb)) : forma.moveTo(X(xb), -Z(zb)));
+  forma.closePath();
+  (huecos || []).forEach(h => {
+    const p = new THREE.Path();
+    h.forEach(([xb, zb], i) => i ? p.lineTo(X(xb), -Z(zb)) : p.moveTo(X(xb), -Z(zb)));
+    p.closePath(); forma.holes.push(p);
+  });
+  const geo = new THREE.ExtrudeGeometry(forma, { depth: espesor, bevelEnabled: false, curveSegments: 6 });
+  geo.rotateX(-Math.PI / 2);
+  geo.translate(0, y0, 0);
+  const m = new THREE.Mesh(geo, mats);
+  m.castShadow = true; m.receiveShadow = true; m.name = nombre;
   return m;
 }
-// Aristas visibles para las piezas de acrílico (si no, el canal "desaparece")
-function aristas(malla, grupo) {
-  const l = new THREE.LineSegments(new THREE.EdgesGeometry(malla.geometry), MAT.aristaAcr);
+// Aristas visibles para las piezas transparentes (si no, "desaparecen")
+function aristas(malla, grupo, mat) {
+  const l = new THREE.LineSegments(new THREE.EdgesGeometry(malla.geometry, 30), mat || MAT.aristaPl);
   l.position.copy(malla.position); l.rotation.copy(malla.rotation); l.name = 'arista';
   (grupo || malla.parent).add(l);
   return malla;
 }
-
-/* ============================================================================
-   ===== BASE, PATAS Y RELIEVE =====
-   Tabla de MDF con un recorte para el tóper (reservorio) y cuatro patas.
-   Encima, UN bloque de unicel de 3" con la zanja del río; sobre él, 2 capas
-   de 1" de la sierra (atrás) y 1 de la terraza (al frente).
-   ========================================================================== */
-const T = CONFIG.terreno, B = CONFIG.base, K = CONFIG.canal, RS = CONFIG.bahia.reservorio;
-
-// Geometría de la zanja: el ancho y largo EXTERIORES del canal de acrílico
-const zZanja0 = K.zc - K.anchoInt / 2 - K.pared;       // -6.3
-const zZanja1 = K.zc + K.anchoInt / 2 + K.pared;       //  0.3
-const xZanja0 = K.x0 - K.pared;                        // -18.8
-const yFondoZanja = K.pisoY - K.pared;                 //  1.2  (unicel que queda bajo el canal)
-const zParedTras = K.zc - K.anchoInt / 2 - K.pared / 2;
-const zParedFrente = K.zc + K.anchoInt / 2 + K.pared / 2;
-const yCoronaCanal = K.pisoY + K.altoInt;              //  7.5  = cota de la llanura
-
-// Siluetas de las curvas de nivel (deterministas)
-const FRENTES_SIERRA = [-7.6, -10.0];
-function frenteSierra(i, x) {
-  return FRENTES_SIERRA[i] + 0.6 * Math.sin(x * 0.19 + i * 1.7) + 0.34 * Math.sin(x * 0.47 - i * 2.3);
+const _matsCable = {};
+function materialCable(color) {
+  if (!_matsCable[color]) _matsCable[color] = Ph({ color: color, shininess: 45 });
+  return _matsCable[color];
 }
-function frenteTerraza(x) {
-  return T.zTerraza + 0.6 * Math.sin(x * 0.23 + 0.6) + 0.3 * Math.sin(x * 0.51);
-}
-function enZanja(x, z) { return x >= xZanja0 && x <= T.xMax && z > zZanja0 && z < zZanja1; }
-
-// Cota de la superficie en un punto: para posar árboles, casas y postes
-function cotaTerreno(x, z) {
-  if (x > T.xMax || x < T.xMin || Math.abs(z) > B.z / 2) return 0;   // fuera del unicel: la tabla
-  if (enZanja(x, z)) return T.yCama;                                 // sobre el río: el borde
-  if (z > frenteTerraza(x)) return T.yCama + T.paso;
-  let h = T.yCama;
-  for (let i = 0; i < T.capasSierra; i++) if (z < frenteSierra(i, x)) h = T.yCama + (i + 1) * T.paso;
-  return h;
-}
-
-// Losa entre un borde ondulado zFrente(x) y un borde recto en zRecto
-function losaContorno(zFrente, zRecto, xMin, xMax, yInf, altura, mat, nombre) {
-  const forma = new THREE.Shape();
-  const pasos = 46;
-  forma.moveTo(xMin, -zFrente(xMin));
-  for (let i = 1; i <= pasos; i++) {
-    const x = mezclar(xMin, xMax, i / pasos);
-    forma.lineTo(x, -zFrente(x));
-  }
-  forma.lineTo(xMax, -zRecto);
-  forma.lineTo(xMin, -zRecto);
-  forma.closePath();
-  const geo = new THREE.ExtrudeGeometry(forma, { depth: altura, bevelEnabled: false, curveSegments: 1 });
-  geo.rotateX(-Math.PI / 2);
-  geo.translate(0, yInf, 0);
-  const m = new THREE.Mesh(geo, mat);
-  m.castShadow = true; m.receiveShadow = true;
-  m.name = nombre || 'curva_nivel';
+function tubo(puntos, radio, color, nombre, tension) {
+  const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', tension === undefined ? 0.35 : tension);
+  const m = new THREE.Mesh(new THREE.TubeGeometry(curva, Math.max(24, puntos.length * 10), radio, 6, false),
+    typeof color === 'number' ? materialCable(color) : color);
+  m.castShadow = false; m.name = nombre || 'cable';
   return m;
 }
+// Mazo de varios hilos paralelos que siguen la misma ruta (desfase en un eje)
+function mazo(grupo, puntos, colores, eje, sep) {
+  const d = eje || new THREE.Vector3(1, 0, 0), s = sep || 0.17;
+  colores.forEach((c, i) => {
+    const off = (i - (colores.length - 1) / 2) * s;
+    grupo.add(tubo(puntos.map(p => p.clone().addScaledVector(d, off)), 0.07, c, 'cable'));
+  });
+}
 
+/* ============================================================================
+   ===== BASE: TRIPLAY CON EL HUECO DEL TÓPER Y 4 PATAS =====
+   ========================================================================== */
+const huecoToper = [[TP.x0, TP.z0], [TP.x1, TP.z0], [TP.x1, TP.z1], [TP.x0, TP.z1]];
 (function construirBase() {
-  // --- Tabla MDF en 4 piezas alrededor del recorte del tóper ---
-  const xa = -B.x / 2, xb = B.x / 2, za = -B.z / 2, zb = B.z / 2, y = -B.espesor / 2;
-  grupoTerreno.add(caja(RS.x0 - xa, B.espesor, B.z, MAT.mdf, (xa + RS.x0) / 2, y, 0, 'tabla_mdf'));
-  grupoTerreno.add(caja(xb - RS.x1, B.espesor, B.z, MAT.mdf, (RS.x1 + xb) / 2, y, 0, 'tabla_mdf'));
-  grupoTerreno.add(caja(RS.x1 - RS.x0, B.espesor, RS.z0 - za, MAT.mdf, (RS.x0 + RS.x1) / 2, y, (za + RS.z0) / 2, 'tabla_mdf'));
-  grupoTerreno.add(caja(RS.x1 - RS.x0, B.espesor, zb - RS.z1, MAT.mdf, (RS.x0 + RS.x1) / 2, y, (RS.z1 + zb) / 2, 'tabla_mdf'));
-
-  // --- Patas: dejan el hueco para que el tóper cuelgue sin tocar la mesa ---
-  const PT = CONFIG.patas;
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    grupoTerreno.add(caja(PT.lado, PT.alto, PT.lado, MAT.pata,
-      sx * PT.x, -B.espesor - PT.alto / 2, sz * PT.z, 'pata'));
-  }
+  grupoTerreno.add(losa([[0, 0], [B.largo, 0], [B.largo, B.ancho], [0, B.ancho]],
+    -B.espesor, B.espesor, [MAT.triplay, MAT.canto], 'tabla_triplay', [huecoToper]));
+  const L = CONFIG.patas.lado, H = CONFIG.patas.alto;
+  [[0, 0], [B.largo - L, 0], [0, B.ancho - L], [B.largo - L, B.ancho - L]].forEach(([xb, zb]) =>
+    grupoTerreno.add(bloque(xb, xb + L, -B.espesor - H, -B.espesor, zb, zb + L, MAT.pata, 'pata')));
+  // Fibra de la zona baja, recortada alrededor del tóper
+  grupoTerreno.add(losa([[xCara, 0], [B.largo, 0], [B.largo, B.ancho], [xCara, B.ancho], [xCara, TP.z1], [TP.x1, TP.z1], [TP.x1, TP.z0], [xCara, TP.z0]],
+    0, CONFIG.fibra, [MAT.fibra, MAT.fibra], 'fibra_zona_baja'));
 })();
 
 // Mesa de trabajo: plano invisible que sólo recibe la sombra de la maqueta
 const mesa = new THREE.Mesh(new THREE.PlaneGeometry(170, 120), MAT.mesa);
 mesa.rotation.x = -Math.PI / 2;
-mesa.position.y = -B.espesor - CONFIG.patas.alto;
+mesa.position.y = yMesa;
 mesa.receiveShadow = true;
 mesa.name = 'mesa_trabajo';
 escena.add(mesa);
 
-(function construirRelieve() {
-  const U = MAT.unicel, L = MAT.llanura, H = MAT.lecho;
-  // --- Bloque 3" con la zanja tallada (4 piezas = 1 bloque con un canal) ---
-  //     orden de caras: [+X, −X, +Y, −Y, +Z, −Z]
-  grupoTerreno.add(bloque(xZanja0, T.xMax, 0, yFondoZanja, zZanja0, zZanja1, [U, U, H, U, U, U], 'unicel_fondo_zanja'));
-  grupoTerreno.add(bloque(T.xMin, T.xMax, 0, T.yCama, -B.z / 2, zZanja0, [U, U, L, U, H, U], 'unicel_orilla_trasera'));
-  grupoTerreno.add(bloque(T.xMin, T.xMax, 0, T.yCama, zZanja1, B.z / 2, [U, U, L, U, U, H], 'unicel_orilla_frontal'));
-  grupoTerreno.add(bloque(T.xMin, xZanja0, 0, T.yCama, zZanja0, zZanja1, [H, U, L, U, U, U], 'unicel_cabecera'));
-
-  // --- Sierra escalonada (capas de 1"), sólo detrás del río ---
-  for (let i = 0; i < T.capasSierra; i++) {
-    grupoTerreno.add(losaContorno(x => frenteSierra(i, x), -B.z / 2, T.xMin, T.xMax,
-      T.yCama + i * T.paso, T.paso, MAT.sierra[i + 1], 'sierra_capa_' + (i + 1)));
-  }
-  // --- Terraza del frente (1 capa de 1"): ahí va la caseta con el buzzer ---
-  grupoTerreno.add(losaContorno(frenteTerraza, B.z / 2, T.xMin, T.xMax,
-    T.yCama, T.paso, MAT.sierra[1], 'terraza_frontal'));
+/* ============================================================================
+   ===== BLOQUE DE UNICEL CON LA ZANJA DEL RÍO =====
+   Unicel de 3″ + 2 × 1″ (12.7 cm). Sobresale 1.2 cm por la izquierda de la
+   tabla. La zanja atraviesa todo el bloque hasta el triplay y llega a la cara
+   de la compuerta. Paredes de cartulina blanca en el frente, atrás y el lado
+   izquierdo; fibra verde arriba y en la cara.
+   ========================================================================== */
+(function construirBloque() {
+  const g = grupoTerreno, x0 = xIzq + PW;
+  g.add(losa([[x0, PW], [BL.x1, PW], [BL.x1, K.z0], [K.x0, K.z0], [K.x0, K.z1], [BL.x1, K.z1], [BL.x1, B.ancho - PW], [x0, B.ancho - PW]],
+    0, BL.alto, [MAT.unicel, MAT.fibraCara], 'unicel_bloque'));
+  // Paredes de cartulina (foam board) de 5 mm
+  g.add(bloque(xIzq, BL.x1, 0, BL.alto, B.ancho - PW, B.ancho, MAT.foam, 'pared_frontal'));
+  g.add(bloque(xIzq, BL.x1, 0, BL.alto, 0, PW, MAT.foam, 'pared_trasera'));
+  g.add(bloque(xIzq, x0, 0, BL.alto, PW, B.ancho - PW, MAT.foam, 'pared_izquierda'));
+  // Fibra de arriba (con la muesca de la zanja) y de la cara de la compuerta
+  g.add(losa([[xIzq, 0], [xCara, 0], [xCara, K.z0], [K.x0, K.z0], [K.x0, K.z1], [xCara, K.z1], [xCara, B.ancho], [xIzq, B.ancho]],
+    BL.alto, CONFIG.fibra, [MAT.fibra, MAT.fibraCara], 'fibra_arriba'));
+  g.add(bloque(BL.x1, xCara, 0, BL.alto, 0, K.z0, MAT.fibraCara, 'fibra_cara'));
+  g.add(bloque(BL.x1, xCara, 0, BL.alto, K.z1, B.ancho, MAT.fibraCara, 'fibra_cara'));
+  // Franja de fibra encimada al frente (borde ondulado)
+  const pts = [];
+  for (let i = 0; i <= 40; i++) { const xb = mezclar(xIzq, xCara, i / 40); pts.push([xb, bordeFranja(xb)]); }
+  pts.push([xCara, B.ancho], [xIzq, B.ancho]);
+  g.add(losa(pts, yTope, CONFIG.franja.espesor, [MAT.fibra, MAT.fibraCara], 'fibra_franja_frontal'));
 })();
 
 /* ============================================================================
-   ===== CANAL DE ACRÍLICO INCRUSTADO =====
-   Caja abierta: piso + 2 paredes + testero aguas arriba. Aguas abajo NO lleva
-   pared: la cierra la compuerta. Entra completa en la zanja y su borde queda a
-   la cota de la llanura, como un río real visto desde arriba.
+   ===== RÍO: CONTENEDOR DE PLÁSTICO TRANSPARENTE =====
+   Apoyado sobre el triplay dentro de la zanja. El extremo de aguas abajo está
+   recortado (queda un labio de 1.2 cm) y lo tapa la compuerta.
    ========================================================================== */
-const largoCanal = K.x1 - xZanja0, cxCanal = (xZanja0 + K.x1) / 2;
-(function construirCanal() {
-  const g = grupoCanal;
-  const piso = caja(largoCanal, K.pared, K.anchoInt + 2 * K.pared, MAT.acrilico, cxCanal, K.pisoY - K.pared / 2, K.zc, 'canal_piso');
-  const pT = caja(largoCanal, K.altoInt, K.pared, MAT.acrilico, cxCanal, K.pisoY + K.altoInt / 2, zParedTras, 'canal_pared_trasera');
-  const pF = caja(largoCanal, K.altoInt, K.pared, MAT.acrilico, cxCanal, K.pisoY + K.altoInt / 2, zParedFrente, 'canal_pared_frontal');
-  const tes = caja(K.pared, K.altoInt, K.anchoInt, MAT.acrilico, K.x0 - K.pared / 2, K.pisoY + K.altoInt / 2, K.zc, 'canal_testero');
-  [piso, pT, pF, tes].forEach(m => { m.castShadow = false; g.add(m); aristas(m, g); });
-
-  // Regleta de aforo (limnímetro) pegada por dentro a la pared trasera:
-  // marcas cada 1 cm (≡ 80 cm reales) + umbrales de 150 y 250 cm en color.
-  const xR = CONFIG.puente.x + 4.0, zR = K.zc - K.anchoInt / 2 + 0.06;
-  g.add(caja(0.7, K.altoInt, 0.06, MAT.blanco, xR, K.pisoY + K.altoInt / 2, zR, 'regleta_aforo'));
-  for (let i = 0; i <= 5; i++)
-    g.add(caja(i % 5 === 0 ? 0.7 : 0.45, 0.07, 0.04, MAT.negro, xR, K.pisoY + i, zR + 0.05, 'regleta_marca'));
-  g.add(caja(0.7, 0.12, 0.04, MAT.naranja, xR, K.pisoY + columnaDesdeNivel(UMBRALES.nivelBajo), zR + 0.06, 'regleta_150cm'));
-  g.add(caja(0.7, 0.12, 0.04, MAT.rojo, xR, K.pisoY + columnaDesdeNivel(UMBRALES.nivelMedio), zR + 0.06, 'regleta_250cm'));
+(function construirRio() {
+  const g = grupoCanal, w = K.pared;
+  const piezas = [
+    bloque(K.x0, K.x1, 0, w, K.z0, K.z1, MAT.plastico, 'rio_piso'),
+    bloque(K.x0, K.x1, 0, K.alto, K.z0, K.z0 + w, MAT.plastico, 'rio_pared_trasera'),
+    bloque(K.x0, K.x1, 0, K.alto, K.z1 - w, K.z1, MAT.plastico, 'rio_pared_frontal'),
+    bloque(K.x0, K.x0 + w, 0, K.alto, K.z0, K.z1, MAT.plastico, 'rio_testero'),
+    bloque(K.x1 - w, K.x1, 0, K.labio, K.z0, K.z1, MAT.plastico, 'rio_labio'),
+    // ceja del borde
+    bloque(K.x0 - 0.35, K.x1, K.alto - 0.12, K.alto, K.z0 - 0.35, K.z0, MAT.plastico, 'rio_ceja'),
+    bloque(K.x0 - 0.35, K.x1, K.alto - 0.12, K.alto, K.z1, K.z1 + 0.35, MAT.plastico, 'rio_ceja'),
+    bloque(K.x0 - 0.35, K.x0, K.alto - 0.12, K.alto, K.z0, K.z1, MAT.plastico, 'rio_ceja')
+  ];
+  piezas.forEach(m => { m.castShadow = false; g.add(m); aristas(m, g); });
+  // Nervaduras del molde (líneas a media altura)
+  [3.6, 7.4].forEach(y => [K.z0 + 0.02, K.z1 - 0.02].forEach(zb => {
+    const n = bloque(K.x0 + 0.6, K.x1 - 0.3, y, y + 0.08, zb - 0.03, zb + 0.03, MAT.plastico, 'rio_nervadura');
+    n.castShadow = false; g.add(n); aristas(n, g);
+  }));
+  // Fondo café
+  g.add(bloque(K.x0 + w, K.x1 - 0.02, w, K.piso, K.z0 + w, K.z1 - w, MAT.fondoRio, 'rio_fondo_cafe'));
+  // Banco de arena: lengua que se angosta hacia la compuerta, del lado del frente
+  const P = [[16.5, 14.25], [16.4, 9.5], [16.9, 7.3], [18.5, 6.4], [20.8, 6.6], [23.0, 7.7], [25.0, 9.6], [26.4, 11.8], [27.2, 13.4], [27.4, 14.25]];
+  const curva = new THREE.SplineCurve(P.map(p => new THREE.Vector2(p[0], p[1])));
+  g.add(losa(curva.getPoints(40).map(v => [v.x, v.y]), K.piso, 0.45, [MAT.arena, MAT.arena], 'rio_banco_arena'));
 })();
 
-/* ===== CANALETA DE RETORNO =====
-   Rampa transparente con dos paredes que recibe TODO lo que sale del río
-   (por encima de la cresta o por la compuerta abierta) y lo deja caer al tóper.
-   Arranca 5 mm por debajo del piso del canal y baja 1 cm en 3.5 cm. */
-const CA = CONFIG.canaleta;
-const xFinCanaleta = CA.x0 + CA.largo;
-function yPisoCanaleta(x) { return CA.yInicio - (limitar(x, CA.x0, xFinCanaleta) - CA.x0) * CA.caida / CA.largo; }
-
-(function construirCanaleta() {
-  const ang = Math.atan2(CA.caida, CA.largo), L = Math.hypot(CA.largo, CA.caida);
-  const g = new THREE.Group(); g.name = 'canaleta_retorno';
-  g.position.set(CA.x0 + CA.largo / 2, CA.yInicio - CA.caida / 2, K.zc);
-  g.rotation.z = -ang;
-  const piso = caja(L, 0.3, CA.anchoInt + 0.6, MAT.acrilico, 0, -0.15, 0, 'canaleta_piso');
-  piso.castShadow = false; g.add(piso); aristas(piso, g);
-  for (const s of [-1, 1]) {
-    const p = caja(L, CA.altoPared, 0.3, MAT.acrilico, 0, CA.altoPared / 2 - 0.3, s * (CA.anchoInt / 2 + 0.15), 'canaleta_pared');
-    p.castShadow = false; g.add(p); aristas(p, g);
+/* ============================================================================
+   ===== TÓPER (RESERVORIO), BOMBA Y MANGUERA =====
+   El tóper entra en el hueco del triplay y cuelga de su ceja; su fondo queda
+   a ~0.4 cm de la mesa. La bomba va al fondo, del lado de atrás.
+   ========================================================================== */
+let bomba, helice;
+const zbBomba = Math.max(CONFIG.bomba.z, TP.z0 + TP.angosto + 1.3);   // zb real de la bomba
+(function construirToper() {
+  const g = new THREE.Group(); g.name = 'toper';
+  const w = TP.pared, y0 = TP.fondo, y1 = yBajo, k = TP.angosto;     // el fondo es más angosto que la boca
+  const cx = X((TP.x0 + TP.x1) / 2), cz = Z((TP.z0 + TP.z1) / 2), ax = TP.x1 - TP.x0, az = TP.z1 - TP.z0, alto = y1 - y0;
+  // Paredes inclinadas: un cilindro abierto de 4 lados con los vértices llevados a las esquinas
+  const geo = new THREE.CylinderGeometry(1, 1, alto, 4, 1, true);
+  geo.rotateY(Math.PI / 4);
+  const p = geo.attributes.position, v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    const arriba = v.y > 0, sx = Math.sign(v.x), sz = Math.sign(v.z);
+    p.setXYZ(i, sx * (ax / 2 - (arriba ? 0 : k)), v.y, sz * (az / 2 - (arriba ? 0 : k)));
   }
-  grupoCanal.add(g);
-  // Cuña que la apoya sobre la tabla antes de volar sobre el tóper
-  grupoCanal.add(caja(1.3, 0.55, CA.anchoInt, MAT.madera, CA.x0 + 0.7, 0.275, K.zc, 'cuna_canaleta'));
+  geo.computeVertexNormals();
+  const paredes = new THREE.Mesh(geo, MAT.toper); paredes.position.set(cx, y0 + alto / 2, cz); paredes.name = 'toper_paredes';
+  [paredes,
+   caja(ax - 2 * k, w, az - 2 * k, MAT.toper, cx, y0 + w / 2, cz, 'toper_piso'),
+   bloque(TP.x0 - 0.5, TP.x1 + 0.5, y1, y1 + 0.15, TP.z0 - 0.5, TP.z0, MAT.toper, 'toper_ceja'),
+   bloque(TP.x0 - 0.5, TP.x1 + 0.5, y1, y1 + 0.15, TP.z1, TP.z1 + 0.5, MAT.toper, 'toper_ceja'),
+   bloque(TP.x1, TP.x1 + 0.5, y1, y1 + 0.15, TP.z0, TP.z1, MAT.toper, 'toper_ceja')
+  ].forEach(m => { m.castShadow = false; g.add(m); aristas(m, g, MAT.aristaTp); });
+
+  // Mini bomba sumergible blanca (cilindro con salida arriba)
+  bomba = new THREE.Group(); bomba.name = 'bomba';
+  bomba.position.set(X(CONFIG.bomba.x), TP.fondo + w, Z(zbBomba));
+  bomba.add(cilindro(1.15, 1.2, 3.0, 18, MAT.bomba, 0, 1.5, 0, 'bomba_cuerpo'));
+  bomba.add(cilindro(1.2, 1.2, 0.3, 18, MAT.bomba, 0, 0.15, 0, 'bomba_base'));
+  bomba.add(cilindro(0.3, 0.32, 0.9, 10, MAT.bomba, 0.35, 3.4, -0.2, 'bomba_salida'));
+  bomba.add(cilindro(0.12, 0.12, 0.7, 6, MAT.negro, -0.5, 3.3, 0.3, 'bomba_cable'));
+  helice = new THREE.Group(); helice.position.set(0, 0.6, 1.21); helice.name = 'bomba_helice';
+  for (let i = 0; i < 3; i++) {
+    const pala = caja(0.7, 0.06, 0.06, MAT.metalOsc, 0, 0, 0, 'bomba_pala');
+    pala.rotation.z = i * Math.PI * 2 / 3; helice.add(pala);
+  }
+  bomba.add(helice);
+  g.add(bomba);
+  grupoBahia.add(g);
+})();
+
+// Manguera de silicón transparente: sube por la pared trasera del tóper, entra
+// al bloque por la esquina de atrás, corre oculta dentro del unicel y sale en
+// el nacimiento (junto a la casa), donde se dobla hacia adentro del río.
+const nac = CONFIG.nacimiento;
+const curvaManguera = new THREE.CatmullRomCurve3([
+  V(CONFIG.bomba.x + 0.35, TP.fondo + 3.9, zbBomba - 0.2),
+  V(CONFIG.bomba.x - 0.6, TP.fondo + 5.0, TP.z0 + 1.0),
+  V(32.5, -0.8, TP.z0 + 0.6),
+  V(29.6, 0.95, TP.z0 + 0.5),
+  V(xCara + 0.3, 1.05, 2.3),
+  V(xCara - 1.2, 1.0, 2.3),                 // ya dentro del unicel
+  V(18.0, 1.0, 2.3),
+  V(9.0, 1.0, 2.5),
+  V(nac.x, 1.0, 4.4),
+  V(nac.x, 1.0, nac.z - 1.2),
+  V(nac.x, 2.4, nac.z),
+  V(nac.x, 10.0, nac.z),
+  V(nac.x, yTope + 0.2, nac.z),
+  V(nac.x + 0.6, yTope + 1.3, nac.z),
+  V(K.x0 + 0.2, yTope + 1.4, nac.z),
+  V(K.x0 + 1.5, yTope + 0.2, nac.z),
+  V(K.x0 + 2.1, K.alto - 0.8, nac.z)
+], false, 'catmullrom', 0.3);
+const boquilla = V(K.x0 + 2.1, K.alto - 0.8, nac.z);
+(function construirManguera() {
+  const m = new THREE.Mesh(new THREE.TubeGeometry(curvaManguera, 220, 0.3, 8, false), MAT.manguera);
+  m.name = 'manguera_silicon'; m.castShadow = true;
+  grupoBahia.add(m);
+})();
+// Chorrito del nacimiento al río (sólo con la bomba encendida)
+const chorroNacimiento = cilindro(0.2, 0.24, 1, 8, MAT.lamina, boquilla.x, 0, boquilla.z, 'chorro_nacimiento');
+chorroNacimiento.castShadow = false;
+grupoAgua.add(chorroNacimiento);
+
+/* ============================================================================
+   ===== COMPUERTA ABATIBLE (servo MG995) =====
+   Hoja de plástico forrada con malla oscura y bordes negros, con una barra de
+   abatelenguas arriba. Cuelga de un eje de brocheta a 11.6 cm del triplay; el
+   servo, montado en un abatelenguas parado del lado del frente, la gira 0–90°
+   hacia afuera y el agua cae directo al tóper.
+   ========================================================================== */
+const zcComp = Z((CP.z0 + CP.z1) / 2), anchoComp = CP.z1 - CP.z0;
+const altoHoja = CP.yEje - CP.barra - CP.yInf;                 // 8.85
+const pivoteCompuerta = new THREE.Group();
+pivoteCompuerta.name = 'compuerta_pivote';
+pivoteCompuerta.position.set(X(CP.x), CP.yEje, zcComp);
+let servo;
+(function construirCompuerta() {
+  const g = pivoteCompuerta;
+  g.add(caja(CP.espesor, altoHoja, anchoComp - 0.3, MAT.malla, 0, -CP.barra - altoHoja / 2, -0.15, 'compuerta_hoja'));
+  // cinta negra en los bordes de la hoja
+  g.add(caja(CP.espesor + 0.04, 0.35, anchoComp - 0.3, MAT.negro, 0, -CP.barra - altoHoja + 0.17, -0.15, 'compuerta_cinta'));
+  g.add(caja(CP.espesor + 0.04, altoHoja, 0.3, MAT.negro, 0, -CP.barra - altoHoja / 2, -anchoComp / 2 + 0.15, 'compuerta_cinta'));
+  // barra de abatelenguas y costado de abatelenguas
+  g.add(caja(0.3, CP.barra, anchoComp + 0.4, MAT.abate, 0.02, -CP.barra / 2, 0, 'compuerta_barra'));
+  g.add(caja(0.3, altoHoja + CP.barra, 0.9, MAT.abate, 0.05, -(altoHoja + CP.barra) / 2, -anchoComp / 2 - 0.2, 'compuerta_costado'));
+  // eje de brocheta: del cuerno del servo hasta salir por atrás
+  const zEje1 = CONFIG.servo.z - 2.2, zEje0 = K.z0 - 3.0;
+  const eje = cilindro(0.15, 0.15, zEje1 - zEje0, 8, MAT.brocheta, 0, 0, Z((zEje1 + zEje0) / 2) - zcComp, 'compuerta_eje');
+  eje.rotation.x = Math.PI / 2;
+  g.add(eje);
+  grupoPuente.add(g);
+
+  // Fijos: palito vertical del frente (tope), soporte trasero con su abatelenguas
+  grupoPuente.add(cilindro(0.15, 0.15, CP.yEje, 8, MAT.brocheta, X(CP.x + 0.2), CP.yEje / 2 + 0.6, Z(CP.z1 + 0.35), 'compuerta_palito_tope'));
+  grupoPuente.add(bloque(CP.x - 6.6, CP.x + 0.2, K.alto, K.alto + 0.3, K.z0 - 0.75, K.z0 + 0.15, MAT.abate, 'soporte_abatelenguas'));
+  grupoPuente.add(bloque(CP.x - 0.4, CP.x + 0.6, CP.yEje - 0.6, CP.yEje + 0.5, K.z0 - 1.6, K.z0 - 0.5, MAT.abate, 'soporte_taquito'));
+  const stub = cilindro(0.15, 0.15, 2.6, 8, MAT.brocheta, X(CP.x - 5.0), K.alto + 0.45, Z(K.z0 - 1.3), 'soporte_brocheta');
+  stub.rotation.x = Math.PI / 2;
+  grupoPuente.add(stub);
+  grupoPuente.add(cilindro(0.15, 0.15, 3.0, 8, MAT.brocheta, X(CP.x - 5.0), K.alto + 1.6, Z(K.z0 - 0.3), 'soporte_brocheta'));
+
+  // Servo MG995 (negro): cuerpo 4.07 × 1.97 × 3.95 (sin flecha); orejas a lo alto
+  servo = new THREE.Group(); servo.name = 'servo_mg995';
+  servo.position.set(X(CONFIG.servo.x), CONFIG.servo.y, Z(CONFIG.servo.z));
+  servo.add(caja(1.97, 4.07, 3.95, MAT.negro, 0, 0, 0, 'mg995_cuerpo'));
+  servo.add(caja(1.97, 5.45, 0.25, MAT.negro, 0, 0, -0.85, 'mg995_orejas'));
+  servo.add(caja(1.6, 1.4, 0.06, Ph({ color: 0x3a3f45 }), 0.99, 0.2, 0.8, 'mg995_etiqueta'));
+  const yFlecha = CP.yEje - CONFIG.servo.y;
+  const corona = cilindro(0.55, 0.55, 0.35, 14, MAT.negro, 0, yFlecha, -2.15, 'mg995_corona');
+  corona.rotation.x = Math.PI / 2; servo.add(corona);
+  servo.add(caja(0.45, 2.8, 0.15, MAT.negro, 0, yFlecha, -2.4, 'mg995_cuerno'));
+  grupoActuadores.add(servo);
+  // Abatelenguas parado que lo sostiene, sobre la fibra de la zona baja
+  grupoActuadores.add(bloque(CONFIG.servo.x + 0.15, CONFIG.servo.x + 0.37, yBajo, CONFIG.servo.y - 2.035,
+    CONFIG.servo.z + 0.4, CONFIG.servo.z + 2.2, MAT.abate, 'servo_abatelenguas'));
+})();
+
+/* ============================================================================
+   ===== PUENTE CON EL HC-SR04 =====
+   Tablero de cartón con barandal de cerca, postes blancos y estribos blancos a
+   cada lado de la zanja. El HC-SR04 va debajo, con la cara a 13.7 cm del fondo.
+   ========================================================================== */
+const yTablero = yCaraSensor + 1.36 + 0.3;         // arriba del tablero ≈ 15.56
+const xcPuente = (PT.x0 + PT.x1) / 2, anchoPuente = PT.x1 - PT.x0, largoPuente = PT.z1 - PT.z0;
+function geoCerca(largo, alto, n) {                // barandal de cerca: una sola pieza con huecos
+  const s = new THREE.Shape();
+  s.moveTo(0, 0); s.lineTo(largo, 0); s.lineTo(largo, alto); s.lineTo(0, alto); s.closePath();
+  const paso = largo / n, ancho = paso * 0.5;
+  for (let i = 0; i < n; i++) {
+    const x0 = i * paso + (paso - ancho) / 2 + paso / 2;
+    if (x0 + ancho > largo - 0.05) break;
+    const h = new THREE.Path();
+    h.moveTo(x0, 0.16); h.lineTo(x0 + ancho, 0.16); h.lineTo(x0 + ancho, alto * 0.55); h.lineTo(x0, alto * 0.55); h.closePath();
+    s.holes.push(h);
+    const h2 = new THREE.Path();
+    h2.moveTo(x0, alto * 0.67); h2.lineTo(x0 + ancho, alto * 0.67); h2.lineTo(x0 + ancho * 0.5, alto); h2.closePath();
+    s.holes.push(h2);
+  }
+  return new THREE.ExtrudeGeometry(s, { depth: 0.1, bevelEnabled: false });
+}
+(function construirPuente() {
+  const g = new THREE.Group(); g.name = 'puente';
+  g.add(bloque(PT.x0, PT.x1, yTablero - 0.3, yTablero, PT.z0, PT.z1, MAT.carton, 'puente_tablero'));
+  const geo = geoCerca(largoPuente - 1.4, 0.95, 34);
+  [PT.x0 + 0.15, PT.x1 - 0.25].forEach(xb => {
+    const c = new THREE.Mesh(geo, MAT.barandal);
+    c.rotation.y = -Math.PI / 2;               // largo a lo largo de +Z
+    c.position.set(X(xb), yTablero, Z(PT.z0 + 0.7));
+    c.castShadow = true; c.name = 'puente_barandal';
+    g.add(c);
+  });
+  [[PT.x0 + 0.2, PT.z0 + 0.35], [PT.x1 - 0.2, PT.z0 + 0.35], [PT.x0 + 0.2, PT.z1 - 0.35], [PT.x1 - 0.2, PT.z1 - 0.35]].forEach(([xb, zb]) =>
+    g.add(bloque(xb - 0.45, xb + 0.45, yTablero, yTablero + 1.3, zb - 0.35, zb + 0.35, MAT.blanco, 'puente_poste')));
+  // Estribos blancos a cada lado de la zanja
+  g.add(bloque(PT.x0 - 0.2, PT.x1 + 0.2, yTope, yTablero - 0.3, PT.z0, K.z0 - 0.05, MAT.blanco, 'puente_estribo'));
+  g.add(bloque(PT.x0 - 0.2, PT.x1 + 0.2, yTope, yTablero - 0.3, K.z1 + 0.05, PT.z1, MAT.blanco, 'puente_estribo'));
+  grupoPuente.add(g);
+})();
+
+/* ============================================================================
+   ===== SENSORES =====
+   ========================================================================== */
+function crearHCSR04() {
+  const g = new THREE.Group(); g.name = 'hc_sr04';
+  g.add(caja(4.5, 0.16, 2.0, MAT.pcbAzul, 0, 0, 0, 'hcsr04_pcb'));
+  for (const s of [-1, 1]) {
+    g.add(cilindro(0.8, 0.8, 1.2, 16, MAT.metal, s * 1.3, -0.68, 0, 'hcsr04_transductor'));
+    g.add(cilindro(0.66, 0.66, 0.05, 16, Ph({ color: 0x3a4046 }), s * 1.3, -1.29, 0, 'hcsr04_malla'));
+  }
+  g.add(caja(0.5, 0.35, 0.3, MAT.metal, 0, -0.25, 0.6, 'hcsr04_cristal'));
+  g.add(caja(1.1, 0.25, 0.25, MAT.negro, 0, 0.18, -0.85, 'hcsr04_pines'));
+  return g;
+}
+function crearPlacaLluvia() {                       // placa de 5.4 × 4.0 con pistas en peine
+  const g = new THREE.Group(); g.name = 'placa_lluvia';
+  const p = new THREE.Mesh(new THREE.BoxGeometry(5.4, 4.0, 0.16), [MAT.pcbNegro, MAT.pcbNegro, MAT.pcbNegro, MAT.pcbNegro, MAT.peine, MAT.pcbNegro]);
+  p.castShadow = true; p.name = 'lluvia_placa'; g.add(p);
+  g.add(caja(0.9, 0.5, 0.35, MAT.negro, 0, -1.7, -0.2, 'lluvia_conector'));
+  return g;
+}
+function crearHW080() {                             // horquilla de 2.0 × 6.0 cm
+  const g = new THREE.Group(); g.name = 'hw080';
+  const pcb = new THREE.Shape();
+  pcb.moveTo(-1.0, 0); pcb.lineTo(1.0, 0); pcb.lineTo(1.0, -1.4); pcb.lineTo(0.75, -1.4); pcb.lineTo(0.75, -5.6); pcb.lineTo(0.55, -6.0);
+  pcb.lineTo(0.35, -5.6); pcb.lineTo(0.35, -1.4); pcb.lineTo(-0.35, -1.4); pcb.lineTo(-0.35, -5.6); pcb.lineTo(-0.55, -6.0);
+  pcb.lineTo(-0.75, -5.6); pcb.lineTo(-0.75, -1.4); pcb.lineTo(-1.0, -1.4); pcb.closePath();
+  const m = new THREE.Mesh(new THREE.ExtrudeGeometry(pcb, { depth: 0.16, bevelEnabled: false }), MAT.pcbNegro);
+  m.castShadow = true; m.name = 'hw080_horquilla'; g.add(m);
+  g.add(caja(0.8, 0.3, 0.6, MAT.negro, 0, 0.15, 0.25, 'hw080_conector'));
+  return g;
+}
+
+// HC-SR04 bajo el puente, con los transductores a lo ancho del río
+const hcsr04 = crearHCSR04();
+hcsr04.position.set(X(xcPuente), yCaraSensor + 1.28, zcRio);
+hcsr04.rotation.y = Math.PI / 2;
+grupoSensores.add(hcsr04);
+
+// Hoyo con tierra y el HW-080 (YL-69) adentro
+const YL = CONFIG.yl69;
+const hw080 = crearHW080();
+hw080.position.set(X(YL.x + 0.2), yTope + 1.05, Z(YL.z));
+hw080.rotation.set(-0.35, 0.6, 0.12);
+grupoSensores.add(hw080);
+grupoSensores.add(cilindro(YL.hoyo / 2, YL.hoyo / 2 - 0.2, 0.7, 18, MAT.tierra, X(YL.x), yTope - 0.3, Z(YL.z), 'hoyo_tierra'));
+
+// Cono del ultrasonido (~30°): deja ver que la huella cae dentro del río
+const conoHC = new THREE.Mesh(new THREE.ConeGeometry(1, 1, 28, 1, true),
+  new THREE.MeshBasicMaterial({ color: 0xe8a33a, transparent: true, opacity: 0.17, side: THREE.DoubleSide, depthWrite: false }));
+conoHC.name = 'cono_ultrasonido';
+grupoSensores.add(conoHC);
+const TAN15 = Math.tan(15 * Math.PI / 180);
+function actualizarCono(yAgua) {
+  const d = Math.max(0.2, yCaraSensor - yAgua), r = d * TAN15;
+  conoHC.scale.set(r, d, r);
+  conoHC.position.set(X(xcPuente), yAgua + d / 2, zcRio);
+}
+
+/* ============================================================================
+   ===== FAROL CON EL LED RGB =====
+   El LED toma el color que publica el nodo (campo "led"): apagado hasta que
+   llega la primera lectura.
+   ========================================================================== */
+const FA = CONFIG.farol;
+let ledFarol, luzFarol, brilloFarol;
+const farol = new THREE.Group(); farol.name = 'farol';
+(function construirFarol() {
+  const g = farol, [cw, ch, cd] = FA.cabeza, y0 = FA.poste;
+  g.position.set(X(FA.x), yTope, Z(FA.z));
+  g.add(cilindro(0.6, 0.62, FA.poste, 14, MAT.grisFarol, 0, FA.poste / 2, 0, 'farol_poste'));
+  g.add(caja(cw, 0.3, cd, MAT.grisFarol, 0, y0 + 0.15, 0, 'farol_base'));
+  g.add(caja(cw + 0.2, 0.35, cd + 0.2, MAT.grisFarol, 0, y0 + ch - 0.17, 0, 'farol_techo'));
+  for (const sx of [-1, 1]) for (const sz of [-1, 1])
+    g.add(caja(0.35, ch, 0.35, MAT.grisFarol, sx * (cw / 2 - 0.17), y0 + ch / 2, sz * (cd / 2 - 0.17), 'farol_marco'));
+  for (const s of [-1, 1]) {
+    g.add(caja(cw - 0.5, ch - 0.7, 0.05, MAT.vidrio, 0, y0 + ch / 2, s * (cd / 2 - 0.05), 'farol_vidrio'));
+    g.add(caja(0.05, ch - 0.7, cd - 0.5, MAT.vidrio, s * (cw / 2 - 0.05), y0 + ch / 2, 0, 'farol_vidrio'));
+  }
+  ledFarol = new THREE.Mesh(new THREE.SphereGeometry(0.28, 12, 8), new THREE.MeshBasicMaterial({ color: CONFIG.colores.ledApagado }));
+  ledFarol.position.set(0, y0 + 1.25, 0); ledFarol.name = 'farol_led_rgb';
+  g.add(ledFarol);
+  g.add(cilindro(0.28, 0.28, 0.6, 10, Ph({ color: 0xe8eef2, transparent: true, opacity: 0.8 }), 0, y0 + 0.75, 0, 'farol_led_cuerpo'));
+  // Resplandor dentro de la cabeza: el LED real es chiquito y de lejos no se notaría el color
+  brilloFarol = new THREE.Mesh(new THREE.SphereGeometry(1.15, 16, 12),
+    new THREE.MeshBasicMaterial({ color: CONFIG.colores.ledBajo, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+  brilloFarol.position.set(0, y0 + 1.5, 0); brilloFarol.name = 'farol_brillo'; brilloFarol.renderOrder = 5;
+  g.add(brilloFarol);
+  luzFarol = new THREE.PointLight(CONFIG.colores.ledBajo, 0, 14, 2);
+  luzFarol.position.set(0, y0 + 1.4, 0);
+  g.add(luzFarol);
+  grupoActuadores.add(g);
+})();
+
+/* ============================================================================
+   ===== AMBIENTACIÓN: CASA CON LA PLACA DE LLUVIA, CASITA Y ÁRBOLES =====
+   ========================================================================== */
+function palitoRedondo(largo, ancho, grueso, mat) {  // abatelenguas con una punta redonda
+  const s = new THREE.Shape(), r = ancho / 2;
+  s.moveTo(0, -r); s.lineTo(largo - r, -r); s.absarc(largo - r, 0, r, -Math.PI / 2, Math.PI / 2, false); s.lineTo(0, r); s.closePath();
+  const geo = new THREE.ExtrudeGeometry(s, { depth: grueso, bevelEnabled: false, curveSegments: 10 });
+  geo.translate(0, 0, -grueso / 2);
+  const m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+// Casa de cartulina blanca con techo de dos aguas de abatelenguas (cumbrera a lo largo de x)
+function casa(largo, fondo, alto, nombre) {
+  const g = new THREE.Group(); g.name = nombre;
+  g.add(caja(largo, alto, fondo, MAT.muro, 0, alto / 2, 0, nombre + '_muros'));
+  // hastiales
+  const tri = new THREE.Shape(), hr = fondo * 0.45;
+  tri.moveTo(-fondo / 2, 0); tri.lineTo(fondo / 2, 0); tri.lineTo(0, hr); tri.closePath();
+  const geoTri = new THREE.ExtrudeGeometry(tri, { depth: 0.1, bevelEnabled: false });
+  for (const s of [-1, 1]) {
+    const m = new THREE.Mesh(geoTri, MAT.muro);
+    m.rotation.y = Math.PI / 2; m.position.set(s * largo / 2 - (s > 0 ? 0.1 : 0), alto, 0); m.castShadow = true; m.name = nombre + '_hastial';
+    g.add(m);
+  }
+  // techo: palitos con punta redonda, perpendiculares a la cumbrera
+  const pend = Math.atan2(hr, fondo / 2), lado = Math.hypot(hr, fondo / 2) + 0.7;
+  const n = Math.max(3, Math.round((largo + 0.6) / 1.55)), anchoP = (largo + 0.6) / n;
+  const e = new THREE.Vector3(1, 0, 0);
+  for (const s of [-1, 1]) {
+    const d = new THREE.Vector3(0, -Math.sin(pend), s * Math.cos(pend));
+    const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(d, e, new THREE.Vector3().crossVectors(d, e)));
+    for (let i = 0; i < n; i++) {
+      const p = palitoRedondo(lado, anchoP - 0.06, 0.18, MAT.abate);
+      p.name = nombre + '_techo'; p.quaternion.copy(q);
+      p.position.set(-largo / 2 - 0.3 + anchoP * (i + 0.5), alto + hr + 0.12, 0);
+      g.add(p);
+    }
+  }
+  g.add(caja(largo + 0.7, 0.2, 0.55, MAT.blanco, 0, alto + hr + 0.2, 0, nombre + '_cumbrera'));
+  // ventanas (cuadritos oscuros) y puerta en la cara del frente (+z)
+  const fz = fondo / 2 + 0.01;
+  [-largo * 0.28, largo * 0.28].forEach(x => {
+    for (const dx of [-0.22, 0.22]) for (const dy of [-0.22, 0.22])
+      g.add(caja(0.3, 0.3, 0.04, MAT.ventana, x + dx, alto * 0.62 + dy, fz, nombre + '_ventana'));
+  });
+  g.add(caja(Math.min(1.0, largo * 0.22), alto * 0.5, 0.05, MAT.puerta, 0, alto * 0.25, fz, nombre + '_puerta'));
+  // ventanas en los costados
+  for (const s of [-1, 1]) for (const dx of [-0.22, 0.22]) for (const dy of [-0.22, 0.22])
+    g.add(caja(0.04, 0.3, 0.3, MAT.ventana, s * (largo / 2 + 0.01), alto * 0.6 + dy, dx, nombre + '_ventana'));
+  return g;
+}
+const casaPrincipal = casa(5.4, 4.2, 3.0, 'casa');
+casaPrincipal.position.set(X(CONFIG.casa.x), yTope, Z(CONFIG.casa.z));
+grupoAmbientacion.add(casaPrincipal);
+const casita = casa(3.4, 3.0, 2.6, 'casita');
+casita.position.set(X(CONFIG.casita.x), yBajo, Z(CONFIG.casita.z));
+casita.rotation.y = Math.PI / 2;                   // la puerta mira hacia el extremo de la zona baja
+grupoAmbientacion.add(casita);
+
+// Placa de lluvia recargada en la vertiente de atrás del techo, sostenida por una brocheta
+const placaLluvia = crearPlacaLluvia();
+placaLluvia.position.set(X(CONFIG.placa.x), yTope + 5.2, Z(CONFIG.placa.z));
+placaLluvia.rotation.set(-0.35, 0, 0);
+grupoSensores.add(placaLluvia);
+const palitoPlaca = cilindro(0.12, 0.12, 4.4, 6, MAT.brocheta, X(CONFIG.placa.x), yTope + 3.4, Z(CONFIG.placa.z + 0.9), 'placa_brocheta');
+palitoPlaca.rotation.x = 0.35;
+grupoSensores.add(palitoPlaca);
+
+// Árboles: copas de esponja con textura de follaje, deformadas para que no se vean lisas
+function copa(rx, ry, rz, mat) {
+  const geo = new THREE.SphereGeometry(1, 28, 20);
+  const p = geo.attributes.position, v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    const n = 1 + 0.06 * Math.sin(v.x * 7.1 + v.y * 3.3) + 0.05 * Math.sin(v.z * 8.3 - v.y * 5.1) + 0.03 * Math.sin(v.x * 17 + v.z * 13);
+    p.setXYZ(i, v.x * rx * n, v.y * ry * n, v.z * rz * n);
+  }
+  geo.computeVertexNormals();
+  const m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true; m.name = 'arbol_copa';
+  return m;
+}
+function arbol(d) {
+  const g = new THREE.Group(); g.name = 'arbol';
+  const hT = d.tronco + d.copa * 0.3;
+  g.add(cilindro(0.11, 0.15, hT, 6, MAT.tronco, 0, hT / 2, 0, 'arbol_tronco'));
+  const c = copa(d.ancho / 2, d.copa / 2, d.ancho / 2 * (d.fondo || 1), d.mat);
+  c.position.set(d.copaDx || 0, d.tronco + d.copa / 2, d.copaDz || 0);
+  g.add(c);
+  if (d.dona) {                                      // arbusto en forma de dona al pie
+    const geo = new THREE.TorusGeometry(d.dona[0], d.dona[1], 10, 22);
+    const p = geo.attributes.position, v = new THREE.Vector3();
+    for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i); const n = 1 + 0.05 * Math.sin(v.x * 4.3 + v.y * 6.1); p.setXYZ(i, v.x * n, v.y * n, v.z * n * 1.25); }
+    geo.computeVertexNormals();
+    const dn = new THREE.Mesh(geo, MAT.follaje2); dn.rotation.x = Math.PI / 2; dn.position.y = d.dona[1];
+    dn.castShadow = true; dn.name = 'arbol_dona'; g.add(dn);
+  }
+  return g;
+}
+const ARBOLES = [
+  // x, z = posición del tronco (cm de la tabla); alto = tronco + copa (medido en las fotos)
+  { x: 3.8,  z: 0.7,  ancho: 4.0, copa: 6.8, tronco: 4.6 },                     // atrás, junto a la casa (11.4 cm)
+  { x: 13.4, z: 0.7,  ancho: 3.8, copa: 6.6, tronco: 4.6, mat: 'follaje2' },     // atrás, detrás del puente (11.2 cm)
+  { x: 20.4, z: 1.1,  ancho: 4.2, copa: 6.4, tronco: 4.2 },                     // atrás, derecha (10.6 cm)
+  { x: 4.2,  z: 17.4, ancho: 5.8, copa: 5.6, tronco: 2.3, dona: [2.55, 1.1], fondo: 0.95, copaDz: -1.7, copaDx: -0.5 },  // grande con dona (7.9 cm)
+  { x: 11.1, z: 21.3, ancho: 4.0, copa: 4.6, tronco: 1.8, mat: 'follaje2' },     // frente (6.4 cm)
+  { x: 23.4, z: 21.9, ancho: 4.2, copa: 6.9, tronco: 4.7 },                     // frente, junto al farol (11.6 cm)
+  { x: 30.4, z: 20.7, ancho: 3.6, copa: 4.6, tronco: 1.9, mat: 'follaje2' }      // zona baja, junto al servo
+];
+ARBOLES.forEach(a => {
+  const t = arbol(Object.assign({}, a, { mat: MAT[a.mat || 'follaje'] }));
+  t.position.set(X(a.x), cotaTerreno(a.x, a.z) - 0.05, Z(a.z));
+  if (!a.copaDz) t.rotation.y = entre(0, Math.PI * 2);
+  grupoAmbientacion.add(t);
+});
+
+/* ============================================================================
+   ===== ELECTRÓNICA BAJO LA TABLA =====
+   2 protoboards de 830 boca abajo (proto 1 al frente, proto 2 atrás), el ESP32
+   en la proto 2, las plaquitas LM393 y el buzzer en la proto 1. El relé va
+   pegado bajo la tabla junto al tóper.
+   ========================================================================== */
+const yBajoTabla = -B.espesor;
+const PR = CONFIG.proto;
+const yCaraProto = yBajoTabla - 0.9;                 // cara de los hoyitos (mirando a la mesa)
+let esp32, moduloRele, ledRele, buzzer;
+const colX = c => PR.x0 + 0.45 + (c - 1) * 0.254;     // columna de la protoboard → xb
+(function construirElectronica() {
+  const g = new THREE.Group(); g.name = 'electronica';
+  // Protoboards
+  [PR.z0, PR.z0 + 5.5].forEach((z0, i) => {
+    const p = new THREE.Group(); p.name = 'protoboard_' + (i ? 1 : 2);
+    p.add(bloque(PR.x0, PR.x0 + 16.5, yCaraProto, yBajoTabla, z0, z0 + 5.5, MAT.protoboard, 'protoboard_830'));
+    p.add(bloque(PR.x0 + 0.3, PR.x0 + 16.2, yCaraProto - 0.02, yCaraProto, z0 + 2.5, z0 + 3.0, Ph({ color: 0xd9d5c8 }), 'protoboard_canal'));
+    [[0.35, CONFIG.cable.v5], [0.55, 0x2f5fb0], [4.95, 0x2f5fb0], [5.15, CONFIG.cable.v5]].forEach(([dz, c]) =>
+      p.add(bloque(PR.x0 + 0.4, PR.x0 + 16.1, yCaraProto - 0.02, yCaraProto, z0 + dz - 0.03, z0 + dz + 0.03, materialCable(c), 'protoboard_bus')));
+    g.add(p);
+  });
+  // ESP32 DevKit V1 de 30 pines (columnas 8 a 22 de la proto 2), USB-C hacia la izquierda
+  esp32 = new THREE.Group(); esp32.name = 'esp32';
+  esp32.position.set(X((colX(8) + colX(22)) / 2), yCaraProto - 0.95, Z(PR.z0 + 2.75));
+  esp32.add(caja(5.1, 0.16, 2.8, MAT.pcbNegro, 0, 0, 0, 'esp32_pcb'));
+  esp32.add(caja(1.8, 0.3, 1.6, MAT.metal, 1.3, -0.23, 0, 'esp32_blindaje'));
+  esp32.add(caja(0.75, 0.3, 0.9, MAT.metal, -2.3, -0.22, 0, 'esp32_usbc'));
+  for (const s of [-1, 1]) esp32.add(caja(3.8, 0.85, 0.25, MAT.negro, 0, 0.5, s * 1.27, 'esp32_pines'));
+  g.add(esp32);
+  // Plaquitas LM393 (lluvia c22–c25 y humedad c28–c31), paradas en la proto 1
+  [[23.5, 'lm393_lluvia'], [29.5, 'lm393_humedad']].forEach(([c, nombre]) => {
+    const m = new THREE.Group(); m.name = nombre;
+    m.position.set(X(colX(c)), yCaraProto - 1.5, Z(PR.z0 + 5.5 + 3.6));
+    m.add(caja(1.55, 3.0, 0.14, MAT.pcbAzul, 0, 0, 0, 'lm393_pcb'));
+    m.add(caja(0.6, 0.45, 0.35, MAT.negro, 0, -0.2, 0.2, 'lm393_chip'));
+    m.add(caja(0.6, 0.6, 0.45, Ph({ color: 0x2f6fe0 }), 0, 0.7, 0.22, 'lm393_potenciometro'));
+    m.rotation.x = -0.35;
+    g.add(m);
+  });
+  // Buzzer pasivo (c51–c53 de la proto 1)
+  buzzer = new THREE.Group(); buzzer.name = 'buzzer';
+  buzzer.position.set(X(colX(52)), yCaraProto, Z(PR.z0 + 5.5 + 1.5));
+  buzzer.add(cilindro(0.6, 0.6, 0.85, 18, MAT.negro, 0, -0.45, 0, 'buzzer_capsula'));
+  buzzer.add(cilindro(0.12, 0.12, 0.04, 8, MAT.metalOsc, 0, -0.9, 0, 'buzzer_orificio'));
+  const halo = new THREE.Mesh(new THREE.SphereGeometry(2.4, 16, 12), MAT.halo);
+  halo.position.y = -0.5; halo.name = 'buzzer_halo'; halo.castShadow = false;
+  buzzer.add(halo); buzzer.userData.halo = halo;
+  g.add(buzzer);
+  // Resistencias del divisor del ECHO y del LED
+  [[49, 6.5], [55, 6.5], [57, 6.0]].forEach(([c, dz]) => {
+    const r = cilindro(0.1, 0.1, 0.65, 8, Ph({ color: 0xd8b48a }), X(colX(c)), yCaraProto - 0.25, Z(PR.z0 + dz - 2.5), 'resistencia');
+    r.rotation.z = Math.PI / 2; g.add(r);
+  });
+  // Módulo relé de 1 canal bajo la tabla, junto al tóper
+  moduloRele = new THREE.Group(); moduloRele.name = 'modulo_rele';
+  moduloRele.position.set(X(CONFIG.rele.x), yBajoTabla - 0.35, Z(CONFIG.rele.z));
+  moduloRele.add(caja(2.6, 0.16, 3.4, MAT.pcbNegro, 0, 0, 0, 'rele_pcb'));
+  moduloRele.add(caja(1.55, 1.5, 1.9, Ph({ color: 0x2a5aa8, shininess: 25 }), 0, -0.83, 0.2, 'rele_bloque'));
+  moduloRele.add(caja(1.6, 0.9, 0.8, Ph({ color: 0x2f6fbf }), 0, -0.5, 1.25, 'rele_bornera'));
+  moduloRele.add(caja(0.8, 0.25, 0.25, MAT.negro, 0, 0.2, -1.45, 'rele_pines'));
+  for (let i = 0; i < 2; i++) moduloRele.add(cilindro(0.15, 0.15, 0.35, 8, MAT.negro, -0.9, 0.25, -1.1 + i * 2.2, 'rele_separador'));
+  ledRele = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), Ph({ color: 0xd8402c }));
+  ledRele.position.set(0.8, -0.12, -1.1); ledRele.name = 'rele_led'; moduloRele.add(ledRele);
+  g.add(moduloRele);
+  grupoBahia.add(g);
+})();
+
+/* ============================================================================
+   ===== CABLEADO =====
+   Rojo = 5 V, negro = GND, colores = datos (mismos colores del diagrama).
+   · Esquina frontal derecha del bloque: servo, LED del farol y HW-080 bajan
+     por la pared del frente.
+   · Esquina trasera izquierda: HC-SR04 y placa de lluvia bajan por el lado
+     izquierdo.
+   · La bomba sale del tóper por la orilla derecha y va al relé.
+   ========================================================================== */
+const grupoCables = new THREE.Group(); grupoCables.name = 'cableado';
+grupoSensores.add(grupoCables);
+(function construirCables() {
+  const g = grupoCables, ejeX = new THREE.Vector3(1, 0, 0), ejeZ = new THREE.Vector3(0, 0, 1);
+  const yt = yTope + CONFIG.franja.espesor;            // arriba de la franja del frente
+  const SV = CONFIG.servo, xp = xIzq - 0.25;           // xp: cara de afuera de la pared izquierda
+  const zF = B.ancho + 0.25;                           // cara de afuera de la pared del frente
+  const pz1 = PR.z0 + 5.5;                             // borde entre proto 2 (atrás) y proto 1 (frente)
+  // Bajada común por la pared del frente y llegada a la protoboard
+  const bajaFrente = (x, xFin, zFin) => [V(x, yt - 0.3, zF), V(x, 6.0, zF + 0.05), V(x, 0.5, zF + 0.1), V(x - 0.1, -0.7, zF + 0.15),
+                                         V(x - 1.2, -1.6, B.ancho - 1.2), V(xFin + 3, -2.3, zFin + 1.5), V(xFin, yCaraProto - 0.15, zFin)];
+  // Servo: café, rojo, naranja → por la cara del bloque hacia el frente y abajo
+  mazo(g, [V(SV.x - 0.3, SV.y - 1.6, SV.z + 1.95), V(SV.x - 0.6, SV.y - 1.2, 22.3), V(26.9, SV.y - 1.4, zF)]
+    .concat(bajaFrente(26.3, colX(58), PR.z0 + 4.6).slice(1)), [0x7a4a2a, CONFIG.cable.v5, 0xe08a1e], ejeX, 0.16);
+  // LED RGB del farol: 3 hilos amarillos y el cátodo común → por el frente
+  mazo(g, [V(FA.x + 0.2, yTope + 0.15, FA.z + 0.75), V(25.2, yTope + 0.2, 19.8), V(25.7, yt + 0.25, 24.0)]
+    .concat(bajaFrente(25.7, colX(35), pz1 + 4.2)), [0xe6c228, 0xe6c228, 0xe6c228, CONFIG.cable.gnd], ejeX, 0.15);
+  // HW-080: naranja y gris → hacia la esquina y abajo
+  mazo(g, [V(YL.x + 0.5, yTope + 1.3, YL.z + 0.4), V(21.0, yt + 0.2, 21.4), V(24.8, yt + 0.25, 24.0)]
+    .concat(bajaFrente(24.9, colX(29), pz1 + 4.6)), [0xe08a1e, 0x7d858c], ejeX, 0.16);
+  // Bajada común por la pared izquierda (esquina de atrás) y llegada a la protoboard
+  const bajaIzq = (z, xFin, zFin) => [V(xp, yTope - 0.4, z), V(xp - 0.05, 6.0, z - 0.2), V(xp - 0.1, 0.3, z - 0.3),
+                                       V(0.2, -0.5, z - 0.3), V(1.4, -1.7, z + 1.5), V(xFin - 2, -2.3, zFin), V(xFin, yCaraProto - 0.15, zFin)];
+  // HC-SR04: 4 hilos bajo el tablero hasta el estribo de atrás, luego por atrás hasta la casa
+  mazo(g, [V(xcPuente - 0.85, yCaraSensor + 1.45, 9.4), V(xcPuente - 1.3, yTablero - 0.45, 7.0), V(xcPuente - 1.3, yTablero - 0.45, PT.z0 + 0.3),
+           V(xcPuente - 1.0, yTope + 0.4, 2.2), V(8.5, yTope + 0.25, 2.4), V(1.5, yTope + 0.3, 3.0), V(xIzq + 0.2, yTope + 0.25, 3.3)]
+    .concat(bajaIzq(3.3, colX(51), PR.z0 + 1.6)), [CONFIG.cable.gnd, 0x2e9c55, 0xe08a1e, 0x2f5fb0], ejeZ, 0.15);
+  // Placa de lluvia: negro, blanco, café → mismo camino por el lado izquierdo
+  mazo(g, [V(CONFIG.placa.x, yTope + 3.1, CONFIG.placa.z - 0.9), V(1.4, yTope + 0.6, 4.3), V(xIzq + 0.2, yTope + 0.25, 4.3)]
+    .concat(bajaIzq(4.3, colX(23), pz1 + 4.4)), [CONFIG.cable.gnd, 0xeeeeee, 0x7a4a2a], ejeZ, 0.15);
+  // Bomba: del tóper por la orilla derecha, baja por el canto y llega al relé
+  mazo(g, [V(CONFIG.bomba.x - 0.5, TP.fondo + 3.6, zbBomba + 0.3), V(38.0, -2.0, 2.6), V(TP.x1 - 0.2, 0.4, 2.8), V(TP.x1 + 0.6, yBajo + 0.9, 3.4),
+           V(44.6, yBajo + 0.25, 4.2), V(B.largo + 0.25, 0.2, 4.6), V(B.largo + 0.35, -1.0, 5.0), V(B.largo - 0.9, -1.6, 7.5), V(CONFIG.rele.x + 0.6, -1.9, CONFIG.rele.z + 1.7)],
+    [CONFIG.cable.gnd, CONFIG.cable.v5], ejeX, 0.14);
+  // Relé → proto 2: S (verde), + y − (fuente externa)
+  mazo(g, [V(CONFIG.rele.x, -1.6, CONFIG.rele.z - 1.7), V(40.5, -2.4, 9.8), V(30.0, -2.6, 9.0), V(21.5, -2.5, 8.6), V(colX(60), yCaraProto - 0.15, PR.z0 + 2.6)],
+    [0x2e9c55, CONFIG.cable.v5, CONFIG.cable.gnd], ejeZ, 0.15);
+  // ESP32: cable USB-C al power bank (sale por la izquierda)
+  g.add(tubo([V(colX(8) - 1.8, yCaraProto - 1.2, PR.z0 + 2.75), V(0.3, -3.2, 8.0), V(-2.5, -5.5, 9.5), V(-5.5, yMesa + 0.25, 10.5), V(-10, yMesa + 0.25, 11.5)], 0.18, 0x2b2f33, 'cable_usbc'));
+  // Fuente externa de 5 V: rojo y negro salen por atrás con puntas dupont
+  mazo(g, [V(colX(63), yCaraProto - 0.15, PR.z0 + 1.0), V(20.5, -2.4, 3.0), V(21.5, -2.0, 0.2), V(22.0, -3.2, -0.6), V(22.5, yMesa + 0.6, -1.4)],
+    [CONFIG.cable.v5, CONFIG.cable.gnd], ejeX, 0.18);
+  // Puentes en las protoboards (colores del diagrama)
+  [[13, 0xcc3b2b, 34], [14, 0x2e9c55, 36], [15, 0x2f5fb0, 37], [12, 0x8a4fc4, 51], [10, 0xe08a1e, 58],
+   [19, 0x7a4a2a, 22], [18, 0x1f8f8a, 28], [16, 0x2f5fb0, 49], [17, 0x2aa7c9, 57], [8, 0xe0559a, 51]].forEach(([c0, col, c1], i) => {
+    const za = PR.z0 + 1.0, zb = (i < 7 ? PR.z0 + 5.5 + 4.2 : PR.z0 + 3.6);
+    g.add(tubo([V(colX(c0), yCaraProto, za), V(colX(c0), yCaraProto - 0.7 - i * 0.06, za + 0.6),
+      V((colX(c0) + colX(c1)) / 2, yCaraProto - 0.9 - i * 0.08, (za + zb) / 2), V(colX(c1), yCaraProto - 0.6, zb - 0.4), V(colX(c1), yCaraProto, zb)], 0.05, col, 'puente_proto'));
+  });
 })();
 
 /* ============================================================================
    ===== AGUA =====
-   Río (lámina con oleaje), lámina vertiente sobre la cresta o salida por la
-   compuerta abierta, película en la canaleta, chorro al tóper y nivel del tóper.
-   El volumen se conserva: lo que sube en el río baja en el tóper.
+   Río (lámina con oleaje y volumen), descarga por la compuerta abierta que
+   cae directo al tóper, y nivel del tóper. El volumen se conserva: lo que
+   sube en el río baja en el tóper.
    ========================================================================== */
-const geoAguaRio = new THREE.PlaneGeometry(1, 1, 70, 3);
+const geoAguaRio = new THREE.PlaneGeometry(1, 1, 60, 3);
 const mallaAguaRio = new THREE.Mesh(geoAguaRio, MAT.agua);
-mallaAguaRio.name = 'agua_rio';
+mallaAguaRio.name = 'agua_rio'; mallaAguaRio.renderOrder = 2;
 grupoAgua.add(mallaAguaRio);
 (function normalesArriba() {
   const n = geoAguaRio.attributes.normal;
   for (let i = 0; i < n.count; i++) n.setXYZ(i, 0, 1, 0);
   n.needsUpdate = true;
 })();
+// Volumen de agua (para que se vea a través del plástico)
+const aguaVolumen = caja(xIntRio1 - xIntRio0 - 0.05, 1, anchoIntRio - 0.04, MAT.agua, X((xIntRio0 + xIntRio1) / 2), 0, zcRio, 'agua_rio_volumen');
+aguaVolumen.castShadow = false; aguaVolumen.renderOrder = 1;
+grupoAgua.add(aguaVolumen);
 
-function crearLamina(segs, nombre) {
-  const geo = new THREE.PlaneGeometry(1, 1, 1, segs);
-  const m = new THREE.Mesh(geo, MAT.lamina);
-  m.name = nombre; m.visible = false; m.frustumCulled = false; m.renderOrder = 2;
-  grupoAgua.add(m);
-  return m;
-}
-const laminaSalida = crearLamina(10, 'lamina_vertiente');
-const aguaCanaleta = crearLamina(1, 'agua_canaleta');
-const chorroToper  = crearLamina(10, 'chorro_al_toper');
-
+const laminaSalida = new THREE.Mesh(new THREE.PlaneGeometry(1, 1, 1, 12), MAT.lamina);
+laminaSalida.name = 'lamina_descarga'; laminaSalida.visible = false; laminaSalida.frustumCulled = false; laminaSalida.renderOrder = 3;
+grupoAgua.add(laminaSalida);
 // Coloca una lámina como parábola de caída libre entre dos puntos (plano XY)
-function laminaParabolica(malla, x0, y0, x1, y1, semi0, semi1, curva) {
-  const pos = malla.geometry.attributes.position;
-  const filas = pos.count / 2 - 1;
+function laminaParabolica(malla, x0, y0, x1, y1, semi0, semi1, zc) {
+  const pos = malla.geometry.attributes.position, filas = pos.count / 2 - 1;
   for (let j = 0; j <= filas; j++) {
-    const s = j / filas;
-    const x = mezclar(x0, x1, s);
-    const y = curva ? y0 + (y1 - y0) * s * s : mezclar(y0, y1, s);
-    const sa = mezclar(semi0, semi1, s);
-    pos.setXYZ(j * 2, x, y, K.zc - sa);
-    pos.setXYZ(j * 2 + 1, x, y, K.zc + sa);
+    const s = j / filas, x = mezclar(x0, x1, s), y = y0 + (y1 - y0) * s * s, sa = mezclar(semi0, semi1, s);
+    pos.setXYZ(j * 2, x, y, zc - sa); pos.setXYZ(j * 2 + 1, x, y, zc + sa);
   }
   pos.needsUpdate = true;
-  malla.geometry.computeVertexNormals();
-  malla.geometry.computeBoundingSphere();
+  malla.geometry.computeVertexNormals(); malla.geometry.computeBoundingSphere();
 }
-
-const yCresta = K.pisoY + CONFIG.compuerta.cresta;            // 5.5
-const areaToper = (RS.x1 - RS.x0 - 0.7) * (RS.z1 - RS.z0 - 0.7);
-const aguaReservorio = caja(RS.x1 - RS.x0 - 0.7, 1, RS.z1 - RS.z0 - 0.7, MAT.agua,
-  (RS.x0 + RS.x1) / 2, 0, (RS.z0 + RS.z1) / 2, 'agua_toper');
-aguaReservorio.castShadow = false;
-grupoAgua.add(aguaReservorio);
+// El tóper es cónico: se usa el promedio de la boca y el fondo
+const areaToper = (TP.x1 - TP.x0 - 2 * TP.pared - TP.angosto) * (TP.z1 - TP.z0 - 2 * TP.pared - TP.angosto);
+const yPisoToper = TP.fondo + TP.pared;
+const altoToper = yBajo - yPisoToper;
+const aguaToper = bloque(TP.x0 + TP.angosto + 0.15, TP.x1 - TP.angosto - 0.15, 0, 1, TP.z0 + TP.angosto + 0.15, TP.z1 - TP.angosto - 0.15, MAT.agua, 'agua_toper');
+aguaToper.castShadow = false;
+grupoAgua.add(aguaToper);
 
 // Apertura de la compuerta, 0 cerrada / 1 abierta (90°): la fija el bucle
 let aperturaCompuerta = 0;
-
-// Caudal relativo que sale del río, en "cm de carga" (sólo para dibujar)
+const areaRio = (xIntRio1 - xIntRio0) * anchoIntRio;
+// Caudal relativo que sale del río, en "cm de carga" (sólo para dibujar).
+// Cerrada no sale nada: la hoja llega a 10.1 cm y la columna máxima es de 5 cm.
 function caudales(nivelCm) {
-  const yA = yAguaCanal(nivelCm);
-  const col = yA - K.pisoY;
-  const carga = Math.max(0, yA - yCresta);
-  const qVert = (1 - aperturaCompuerta) * carga;     // rebasa la cresta
-  const qAbre = aperturaCompuerta * col;             // sale por la compuerta abierta
-  return { yA: yA, col: col, carga: carga, qVert: qVert, qAbre: qAbre, q: qVert + qAbre };
+  const yA = yAguaCanal(nivelCm), col = yA - K.piso;
+  const q = aperturaCompuerta * Math.max(0, yA - K.labio);     // sale sobre el labio, bajo la hoja levantada
+  return { yA: yA, col: col, q: q };
 }
 // Cota del agua en el tóper: volumen total − volumen en el río
 function yAguaToper(col) {
-  const vRio = (K.x1 - K.x0) * K.anchoInt * col;
-  const h = limitar((CONFIG.bahia.litros * 1000 - vRio) / areaToper, 0.8, RS.prof - 1);
-  return -RS.prof + 0.3 + h;
+  const h = limitar((TP.litros * 1000 - areaRio * col) / areaToper, 0.4, altoToper - 0.3);
+  return yPisoToper + h;
 }
-
 function actualizarAgua(nivelCm, t) {
-  const Q = caudales(nivelCm);
-  const ap = aperturaCompuerta;
-
-  // --- Río: plano a la cota medida; junto a la compuerta abierta se abate ---
-  const yFin = K.pisoY + Q.col * (1 - 0.5 * ap) - 0.25 * Math.min(Q.carga, 1) * (1 - ap);
-  const pos = geoAguaRio.attributes.position;
-  const nx = 70, nz = 3;
+  const Q = caudales(nivelCm), ap = aperturaCompuerta;
+  // Río: plano a la cota medida; junto a la compuerta abierta se abate hacia el labio
+  const yFin = mezclar(Q.yA, K.labio + 0.15, 0.75 * ap);
+  const pos = geoAguaRio.attributes.position, nx = 60, nz = 3;
   for (let ix = 0; ix <= nx; ix++) {
-    const x = mezclar(K.x0 + 0.02, K.x1 + 0.04, ix / nx);
-    const yCol = mezclar(Q.yA, yFin, suavizar(K.x1 - 7, K.x1, x));
+    const xb = mezclar(xIntRio0 + 0.02, xIntRio1, ix / nx);
+    const yCol = mezclar(Q.yA, yFin, suavizar(xIntRio1 - 6, xIntRio1, xb));
     for (let iz = 0; iz <= nz; iz++) {
-      const z = K.zc + (iz / nz - 0.5) * (K.anchoInt - 0.04);
-      const onda = 0.035 * Math.sin(x * 0.9 - t * 2.4) + 0.022 * Math.sin(z * 1.7 - t * 1.8);
-      pos.setXYZ(iz * (nx + 1) + ix, x, yCol + onda, z);
+      const zb = (K.z0 + K.pared) + (iz / nz) * anchoIntRio;
+      const onda = 0.03 * Math.sin(xb * 0.9 - t * 2.4) + 0.02 * Math.sin(zb * 1.7 - t * 1.8);
+      pos.setXYZ(iz * (nx + 1) + ix, X(xb), Math.max(K.piso + 0.02, yCol + onda), Z(zb));
     }
   }
-  pos.needsUpdate = true;
-  geoAguaRio.computeBoundingSphere();
+  pos.needsUpdate = true; geoAguaRio.computeBoundingSphere();
+  const hv = Math.max(0.02, Q.col - 0.02);
+  aguaVolumen.scale.y = hv; aguaVolumen.position.y = K.piso + hv / 2;
+  mallaAguaRio.visible = aguaVolumen.visible = Q.col > 0.03;
 
-  // --- Salida del río: sobre la cresta (cerrada) o por la boca (abierta) ---
-  const hCan = 0.1 + 0.16 * Math.min(Q.q, 3);                  // espesor en la canaleta
+  // Descarga: cae de la boca del contenedor directo al tóper
+  const yT = yAguaToper(Q.col);
   if (Q.q > 0.02) {
-    let x0, y0, alcance;
-    if (ap < 0.5) {                                            // lámina vertiente
-      x0 = CONFIG.compuerta.x + 0.16; y0 = yCresta + 0.55 * Q.carga;
-      alcance = 0.45 + 1.5 * Math.sqrt(Q.qVert);
-    } else {                                                   // descarga de fondo
-      x0 = K.x1; y0 = yFin;
-      alcance = 0.35 + 0.9 * Math.sqrt(Q.qAbre);
-    }
-    const x1 = Math.min(x0 + alcance, xFinCanaleta - 0.4);
-    laminaParabolica(laminaSalida, x0, y0, x1, yPisoCanaleta(x1) + hCan, K.anchoInt / 2 - 0.1, K.anchoInt / 2, true);
+    const alcance = 0.6 + 1.0 * Math.sqrt(Q.q);
+    laminaParabolica(laminaSalida, X(K.x1), K.labio + 0.1, X(K.x1 + alcance), yT + 0.05, anchoIntRio / 2 - 0.1, anchoIntRio / 2 - 0.6, zcRio);
     laminaSalida.visible = true;
+  } else laminaSalida.visible = false;
 
-    // Película sobre la canaleta
-    laminaParabolica(aguaCanaleta, CA.x0 + 0.3, yPisoCanaleta(CA.x0 + 0.3) + hCan,
-      xFinCanaleta, yPisoCanaleta(xFinCanaleta) + hCan, CA.anchoInt / 2 - 0.05, CA.anchoInt / 2 - 0.05, false);
-    aguaCanaleta.visible = true;
-
-    // Chorro que cae al tóper
-    const yT = yAguaToper(Q.col);
-    laminaParabolica(chorroToper, xFinCanaleta, yPisoCanaleta(xFinCanaleta) + hCan * 0.6,
-      xFinCanaleta + 0.5 + 0.55 * Math.sqrt(Q.q), yT + 0.05, CA.anchoInt / 2 - 0.2, CA.anchoInt / 2 - 1.3, true);
-    chorroToper.visible = true;
-  } else {
-    laminaSalida.visible = aguaCanaleta.visible = chorroToper.visible = false;
-  }
-
-  // --- Nivel del tóper ---
-  const yT = yAguaToper(Q.col), h = yT - (-RS.prof + 0.3);
-  aguaReservorio.scale.y = h;
-  aguaReservorio.position.y = -RS.prof + 0.3 + h / 2;
+  // Nivel del tóper
+  const h = yT - yPisoToper;
+  aguaToper.scale.y = h; aguaToper.position.y = yPisoToper + h / 2;
   return Q;
 }
 actualizarAgua(0, 0);
 
 /* ===== FLECHAS DE FLUJO =====
    Conos blancos que avanzan por el recorrido del agua: bomba → manguera →
-   nacimiento → río → compuerta → canaleta → tóper. Sólo se ven donde de
-   verdad hay corriente en ese momento. */
+   nacimiento → río → compuerta → tóper. Sólo se ven donde de verdad hay
+   corriente en ese momento. */
 const geoFlecha = new THREE.ConeGeometry(0.3, 0.9, 8);
 geoFlecha.rotateZ(-Math.PI / 2);                      // la punta mira a +X
 const _ejeX = new THREE.Vector3(1, 0, 0), _pF = new THREE.Vector3(), _tF = new THREE.Vector3();
@@ -620,7 +1138,7 @@ function crearCorriente(n, nombre) {
   const c = { flechas: [] };
   for (let i = 0; i < n; i++) {
     const f = new THREE.Mesh(geoFlecha, MAT.flecha);
-    f.name = nombre; f.visible = false; f.renderOrder = 3;
+    f.name = nombre; f.visible = false; f.renderOrder = 4;
     grupoFlujo.add(f); c.flechas.push(f);
   }
   return c;
@@ -637,559 +1155,24 @@ function moverCorriente(c, curva, t, vel, activa) {
     f.quaternion.setFromUnitVectors(_ejeX, _tF.normalize());
   }
 }
-const corrienteRio = crearCorriente(8, 'flecha_rio');
+const corrienteManguera = crearCorriente(18, 'flecha_manguera');
+const corrienteRio = crearCorriente(7, 'flecha_rio');
 function moverCorrienteRio(t, yAgua, activa) {
-  const n = corrienteRio.flechas.length, xa = K.x0 + 2.0, xb = K.x1 - 1.2;
+  const n = corrienteRio.flechas.length, xa = K.x0 + 3.0, xb = K.x1 - 1.2;
   for (let i = 0; i < n; i++) {
     const f = corrienteRio.flechas[i];
     f.visible = activa;
     if (!activa) continue;
     const u = ((i / n) + t * 0.035) % 1;
-    f.position.set(mezclar(xa, xb, u), yAgua + 0.32, K.zc);
+    f.position.set(X(mezclar(xa, xb, u)), yAgua + 0.32, zcRio + 1.5);
     f.quaternion.identity();
   }
 }
-const corrienteSalida = crearCorriente(7, 'flecha_salida');
-const colaSalida = [
-  new THREE.Vector3(xFinCanaleta - 1.8, yPisoCanaleta(xFinCanaleta - 1.8) + 0.5, K.zc),
-  new THREE.Vector3(xFinCanaleta - 0.4, yPisoCanaleta(xFinCanaleta - 0.4) + 0.5, K.zc),
-  new THREE.Vector3(xFinCanaleta + 0.7, -1.4, K.zc),
-  new THREE.Vector3(xFinCanaleta + 1.1, -3.0, K.zc)
-];
-const xCP = CONFIG.compuerta.x;
-const curvaVertiente = new THREE.CatmullRomCurve3([
-  new THREE.Vector3(xCP - 1.0, yCresta + 0.6, K.zc),
-  new THREE.Vector3(xCP + 0.2, yCresta + 0.4, K.zc),
-  new THREE.Vector3(xCP + 0.7, 2.6, K.zc)
-].concat(colaSalida));
+const corrienteSalida = crearCorriente(6, 'flecha_salida');
+const zbRio = (K.z0 + K.z1) / 2;
 const curvaDescarga = new THREE.CatmullRomCurve3([
-  new THREE.Vector3(xCP - 1.8, 2.9, K.zc),
-  new THREE.Vector3(xCP - 0.2, 2.3, K.zc),
-  new THREE.Vector3(xCP + 0.7, yPisoCanaleta(xCP + 0.7) + 0.6, K.zc)
-].concat(colaSalida));
-
-/* ============================================================================
-   ===== PUENTE CON EL HC-SR04 COLGADO =====
-   El sensor va pegado bajo el tablero, centrado sobre el río, con sus dos
-   transductores alineados a lo largo del canal. Un separador de 1.7 mm deja
-   la cara del sensor justo a 3.0 cm del borde (v2.3: el puente baja 2.2 cm).
-   ========================================================================== */
-const P = CONFIG.puente;
-const yHC = yCaraSensor + 1.2;            // centro del PCB (los transductores miden 1.2 cm)
-const yTablero = yHC + 0.45;              // centro del tablero de 4 mm
-
-(function construirPuente() {
-  const g = new THREE.Group(); g.name = 'puente';
-  const largo = P.z1 - P.z0, cz = (P.z0 + P.z1) / 2;
-  g.add(caja(P.ancho, 0.4, largo, MAT.madera, P.x, yTablero, cz, 'puente_tablero'));
-  for (const s of [-1, 1]) {
-    g.add(caja(0.15, 0.15, largo, MAT.blanco, P.x + s * (P.ancho / 2 - 0.1), yTablero + 0.55, cz, 'puente_pasamanos'));
-    for (let i = 0; i <= 8; i++) {
-      const z = P.z0 + 0.3 + (i / 8) * (largo - 0.6);
-      g.add(caja(0.12, 0.5, 0.12, MAT.blanco, P.x + s * (P.ancho / 2 - 0.1), yTablero + 0.3, z, 'puente_montante'));
-    }
-  }
-  // Pilares: uno sobre la primera capa de la sierra y otro sobre la llanura,
-  // los dos fuera de la zanja para no estorbar al canal.
-  [P.z0 + 0.6, P.z1 - 0.6].forEach(zE => {
-    const yE = cotaTerreno(P.x, zE), yTop = yTablero - 0.2;
-    g.add(caja(P.ancho * 0.9, yTop - yE, 1.2, MAT.hormigon, P.x, (yTop + yE) / 2, zE, 'puente_pilar'));
-  });
-  // Separador bajo el tablero donde se pega el sensor (cinta doble cara)
-  g.add(caja(1.6, 0.17, 3.6, MAT.madera, P.x, yTablero - 0.285, K.zc, 'puente_separador'));
-  grupoPuente.add(g);
-})();
-
-/* ============================================================================
-   ===== COMPUERTA ABATIBLE (servo SG90) =====
-   Comparada con la guillotina:
-     · Guillotina: necesita piñón-cremallera, dos guías verticales y que la
-       hoja deslice sin trabarse con agua. Con un piñón de ~20 dientes, los
-       180° del SG90 dan unos 3 cm de carrera: no alcanza a liberar el canal.
-     · Abatible: la hoja va pegada al brazo del servo y gira 90° sobre un eje
-       horizontal. Sin guías ni fricción, se ve de lejos y cuesta casi nada.
-       Par necesario ≈ 0.35 kg·cm con la hoja de 6.4 cm (empuje del agua ×
-       brazo de 5.5 cm); el SG90 entrega ~1.5 kg·cm. => se elige la ABATIBLE.
-   Cerrada, la hoja mide 4 cm: es la presa y también el vertedero.
-   ========================================================================== */
-const CP = CONFIG.compuerta;
-const yEje = yCoronaCanal + CP.ejeSobreBorde;     // 8.3
-const hBrazo = yEje - yCresta;                    // 2.8: del eje a la cresta
-const matHoja = new THREE.MeshPhongMaterial({ color: 0x7f9cae, shininess: 90, specular: 0xffffff, transparent: true, opacity: 0.72, side: THREE.DoubleSide });
-const pivoteCompuerta = new THREE.Group();
-pivoteCompuerta.name = 'compuerta_pivote';
-pivoteCompuerta.position.set(CP.x, yEje, K.zc);
-let hojaCompuerta, servo;
-
-(function construirCompuerta() {
-  const g = pivoteCompuerta;
-  hojaCompuerta = caja(0.3, CP.cresta, CP.ancho, matHoja, 0, -(hBrazo + CP.cresta / 2), 0, 'compuerta_hoja');
-  g.add(hojaCompuerta);
-  g.add(caja(0.36, 0.16, CP.ancho, MAT.rojo, 0, -hBrazo - 0.08, 0, 'compuerta_cresta'));   // cinta roja = cresta
-  for (const s of [-1, 1])
-    g.add(caja(0.3, hBrazo + 0.6, 0.4, matHoja, 0, 0.3 - (hBrazo + 0.6) / 2, s * (CP.ancho / 2 + 0.2), 'compuerta_brazo'));
-  const eje = cilindro(0.09, 0.09, CP.ancho + 1.9, 6, MAT.metal, 0, 0, -0.1, 'compuerta_eje');
-  eje.rotation.x = Math.PI / 2;
-  g.add(eje);
-  g.add(caja(0.3, 1.8, 0.12, MAT.blanco, 0, -0.55, CP.ancho / 2 + 0.52, 'sg90_aspa'));       // brazo del servo
-  grupoPuente.add(g);
-
-  // Soporte del pasador del lado de la sierra, pegado a la cara del unicel
-  grupoPuente.add(caja(0.8, 1.8, 0.5, MAT.blanco, T.xMax + 0.4, yEje, K.zc - CP.ancho / 2 - 0.75, 'compuerta_soporte_pasador'));
-
-  // Servo SG90 acostado contra la cara del unicel, con el eje hacia el río
-  servo = new THREE.Group(); servo.name = 'servo_sg90';
-  servo.position.set(CP.x, yEje, K.zc + CP.ancho / 2 + 0.7);
-  const azul = new THREE.MeshPhongMaterial({ color: 0x2f7fd0, shininess: 40 });
-  servo.add(caja(1.2, 2.3, 2.25, azul, 0, -0.55, 1.125, 'sg90_cuerpo'));
-  servo.add(caja(1.2, 3.25, 0.25, azul, 0, -0.55, 0.55, 'sg90_orejas'));
-  const corona = cilindro(0.42, 0.42, 0.3, 10, MAT.blanco, 0, 0, -0.15, 'sg90_corona');
-  corona.rotation.x = Math.PI / 2;
-  servo.add(corona);
-  grupoActuadores.add(servo);
-})();
-
-/* ============================================================================
-   ===== RESERVORIO (TÓPER COLGADO), BOMBA Y MANGUERA =====
-   El tóper (12 × 14 × 6.5 cm) entra en el recorte del MDF y cuelga de su ceja.
-   Su boca queda abajo del final de la canaleta y el agua vuelve sola, por
-   gravedad. Con patas de 6.5 cm su fondo queda 0.9 cm sobre la mesa.
-   ========================================================================== */
-const SE = CONFIG.bahia.seco;
-let bomba, helice, esp32, moduloRele, ledRele;
-
-(function construirReservorio() {
-  const g = new THREE.Group(); g.name = 'reservorio';
-  const matTina = new THREE.MeshPhongMaterial({ color: 0x8fb9cc, shininess: 90, transparent: true, opacity: 0.36, side: THREE.DoubleSide, depthWrite: false });
-  const anchoR = RS.x1 - RS.x0, largoR = RS.z1 - RS.z0, cxR = (RS.x0 + RS.x1) / 2, czR = (RS.z0 + RS.z1) / 2;
-  g.add(caja(anchoR, 0.3, largoR, matTina, cxR, -RS.prof + 0.15, czR, 'toper_piso'));
-  for (const s of [-1, 1]) {
-    g.add(caja(0.3, RS.prof, largoR, matTina, cxR + s * (anchoR / 2 - 0.15), -RS.prof / 2, czR, 'toper_costado'));
-    g.add(caja(anchoR, RS.prof, 0.3, matTina, cxR, -RS.prof / 2, czR + s * (largoR / 2 - 0.15), 'toper_testero'));
-  }
-  // Ceja que se apoya sobre la tabla
-  const matCeja = new THREE.MeshPhongMaterial({ color: 0x9cc3d4, shininess: 60, transparent: true, opacity: 0.6 });
-  g.add(caja(anchoR + 1.2, 0.2, 0.6, matCeja, cxR, 0.1, RS.z0 - 0.3, 'toper_ceja'));
-  g.add(caja(anchoR + 1.2, 0.2, 0.6, matCeja, cxR, 0.1, RS.z1 + 0.3, 'toper_ceja'));
-  g.add(caja(0.6, 0.2, largoR, matCeja, RS.x0 - 0.3, 0.1, czR, 'toper_ceja'));
-  g.add(caja(0.6, 0.2, largoR, matCeja, RS.x1 + 0.3, 0.1, czR, 'toper_ceja'));
-  g.children.forEach(m => { m.castShadow = false; });
-
-  // Bomba sumergible al fondo, en la esquina opuesta a donde cae el chorro
-  bomba = new THREE.Group(); bomba.name = 'bomba';
-  bomba.position.set(RS.x1 - 2.6, -RS.prof + 0.3, RS.z0 + 2.6);
-  bomba.add(caja(2.2, 2.0, 2.0, MAT.negro, 0, 1.0, 0, 'bomba_cuerpo'));
-  bomba.add(caja(2.4, 0.35, 2.2, MAT.metalOsc, 0, 0.18, 0, 'bomba_base'));
-  bomba.add(cilindro(0.3, 0.3, 1.0, 8, MAT.metalOsc, 0, 2.5, 0.4, 'bomba_salida'));
-  helice = new THREE.Group(); helice.name = 'bomba_helice';
-  helice.position.set(0, 1.0, 1.08);                 // rejilla de succión al frente
-  for (let i = 0; i < 3; i++) {
-    const pala = caja(0.75, 0.06, 0.2, MAT.metal, 0, 0, 0, 'bomba_pala');
-    pala.rotation.z = (i * Math.PI * 2) / 3;
-    helice.add(pala);
-  }
-  bomba.add(helice);
-  g.add(bomba);
-  grupoBahia.add(g);
-})();
-
-// Manguera: sube por dentro del tóper pegada a su pared trasera, salta la ceja
-// del lado del unicel y entra en una RANURA de ~1 × 1 cm tallada en la cara
-// inferior del bloque de 3". Corre por ella bajo la sierra (lejos del canal)
-// y sube por un túnel vertical en la cabecera hasta el nacimiento.
-// v2.3: el MDF ya no lleva perforaciones y la manguera no cuelga bajo la tabla.
-const xNac = T.xMin + 1.8, zNac = K.zc;                  // donde asoma la manguera
-const zRanura = -9.8, yRanura = 0.5;
-const curvaManguera = new THREE.CatmullRomCurve3([
-  new THREE.Vector3(RS.x1 - 2.6, -RS.prof + 3.2, RS.z0 + 2.9),
-  new THREE.Vector3(RS.x1 - 3.4, -2.4, RS.z0 + 1.0),
-  new THREE.Vector3(RS.x0 + 4.0, -1.6, RS.z0 + 0.9),
-  new THREE.Vector3(RS.x0 + 1.0, -0.6, zRanura),
-  new THREE.Vector3(RS.x0 + 0.1, 0.75, zRanura),          // salta la ceja del tóper
-  new THREE.Vector3(RS.x0 - 0.8, 0.6, zRanura),
-  new THREE.Vector3(T.xMax + 0.1, yRanura, zRanura),       // entra a la ranura
-  new THREE.Vector3(T.xMax - 4.0, yRanura, zRanura),
-  new THREE.Vector3(xZanja0 + 2.0, yRanura, zRanura),
-  new THREE.Vector3(xNac + 0.2, yRanura, zRanura + 2.2),
-  new THREE.Vector3(xNac, yRanura, zNac - 1.6),
-  new THREE.Vector3(xNac, yRanura + 0.6, zNac),            // codo al pie del túnel
-  new THREE.Vector3(xNac, 3.6, zNac),                      // túnel dentro del unicel
-  new THREE.Vector3(xNac, T.yCama + 0.15, zNac),
-  new THREE.Vector3(xNac + 0.5, T.yCama + 1.0, zNac),
-  new THREE.Vector3(xZanja0 - 0.1, T.yCama + 0.9, zNac),
-  new THREE.Vector3(K.x0 + 0.7, T.yCama - 0.8, zNac)       // boquilla dentro del río
-], false, 'catmullrom', 0.35);
-const xBoquilla = K.x0 + 0.7, yBoquilla = T.yCama - 0.95;
-(function construirManguera() {
-  const m = new THREE.Mesh(new THREE.TubeGeometry(curvaManguera, 140, 0.22, 7, false),
-    new THREE.MeshPhongMaterial({ color: 0x3b4248, shininess: 40 }));
-  m.name = 'manguera_impulsion'; m.castShadow = true;
-  grupoBahia.add(m);
-  grupoBahia.add(cilindro(0.3, 0.26, 0.5, 8, MAT.metalOsc, xBoquilla, yBoquilla + 0.1, zNac, 'boquilla_nacimiento'));
-})();
-// Chorrito del nacimiento al río (sólo con la bomba encendida)
-const chorroNacimiento = cilindro(0.17, 0.2, 1, 8, MAT.lamina, xBoquilla, 0, zNac, 'chorro_nacimiento');
-chorroNacimiento.castShadow = false;
-grupoAgua.add(chorroNacimiento);
-const corrienteManguera = crearCorriente(16, 'flecha_manguera');
-
-/* ============================================================================
-   ===== ZONA SECA DE LA ELECTRÓNICA =====
-   Al frente del tóper, sobre una tarima, y separada del agua por una mampara
-   transparente que detiene salpicaduras del chorro. Mide 16.6 × 8.7 cm: entra
-   justo la protoboard de 830 (16.5 × 5.5) con el relé delante.
-   ========================================================================== */
-const pbx = (SE.x0 + SE.x1) / 2, pbz = SE.z0 + 0.3 + 2.75, pby = SE.tarima;
-(function construirZonaSeca() {
-  const g = new THREE.Group(); g.name = 'zona_seca';
-  const anchoS = SE.x1 - SE.x0, largoS = SE.z1 - SE.z0, cxS = (SE.x0 + SE.x1) / 2, czS = (SE.z0 + SE.z1) / 2;
-  g.add(caja(anchoS, SE.tarima, largoS, MAT.tarima, cxS, SE.tarima / 2, czS, 'tarima_seca'));
-  const mampara = caja(anchoS, 4.0, 0.3, MAT.acrilico, cxS, 2.0, SE.z0 - 0.15, 'mampara_antisalpicaduras');
-  mampara.castShadow = false; g.add(mampara); aristas(mampara, g);
-
-  // Protoboard de 830 puntos (16.5 x 5.5 cm)
-  g.add(caja(16.5, 0.9, 5.5, MAT.protoboard, pbx, pby + 0.45, pbz, 'protoboard_830'));
-  g.add(caja(15.9, 0.06, 0.5, new THREE.MeshPhongMaterial({ color: 0xd9d5c8 }), pbx, pby + 0.91, pbz, 'protoboard_canal'));
-  for (const s of [-1, 1]) {
-    g.add(caja(15.9, 0.05, 0.07, MAT.rojo, pbx, pby + 0.92, pbz + s * 2.35, 'bus_5v'));
-    g.add(caja(15.9, 0.05, 0.07, MAT.negro, pbx, pby + 0.92, pbz + s * 2.62, 'bus_gnd'));
-  }
-
-  // ESP32-WROOM-32 DevKit V1
-  esp32 = new THREE.Group(); esp32.name = 'esp32';
-  esp32.position.set(pbx - 4.6, pby + 0.9, pbz);
-  esp32.add(caja(5.1, 0.16, 2.85, MAT.pcb, 0, 0.08, 0, 'esp32_pcb'));
-  esp32.add(caja(1.8, 0.28, 1.6, MAT.metal, -1.3, 0.30, 0, 'esp32_blindaje'));
-  esp32.add(caja(0.9, 0.1, 1.55, new THREE.MeshPhongMaterial({ color: 0xd8d4c8 }), -0.15, 0.22, 0, 'esp32_antena'));
-  esp32.add(caja(0.8, 0.32, 0.75, MAT.metal, 2.35, 0.30, 0, 'esp32_usb'));
-  for (const s of [-1, 1])
-    esp32.add(caja(4.6, 0.22, 0.22, new THREE.MeshPhongMaterial({ color: 0x25292d }), -0.1, 0.02, s * 1.32, 'esp32_tira_pines'));
-  esp32.add(caja(0.18, 0.1, 0.18, new THREE.MeshPhongMaterial({ color: 0xd23b2b }), 1.6, 0.2, 0.7, 'esp32_led'));
-  g.add(esp32);
-
-  // Módulo relé de 1 canal
-  moduloRele = new THREE.Group(); moduloRele.name = 'modulo_rele';
-  moduloRele.position.set(pbx + 3.0, pby, SE.z1 - 1.35);
-  moduloRele.add(caja(5.0, 0.16, 2.6, MAT.pcbVerde, 0, 0.08, 0, 'rele_pcb'));
-  moduloRele.add(caja(1.9, 1.55, 1.6, new THREE.MeshPhongMaterial({ color: 0x2a5aa8, shininess: 25 }), -1.2, 0.93, 0, 'rele_bloque'));
-  moduloRele.add(caja(1.5, 1.0, 1.9, new THREE.MeshPhongMaterial({ color: 0x2f6b3c }), 1.4, 0.66, 0, 'rele_bornera'));
-  ledRele = new THREE.Mesh(new THREE.SphereGeometry(0.17, 8, 6), new THREE.MeshPhongMaterial({ color: 0x8a2b22 }));
-  ledRele.position.set(0.3, 0.28, 0.9); ledRele.name = 'rele_led';
-  moduloRele.add(ledRele);
-  g.add(moduloRele);
-  grupoBahia.add(g);
-})();
-
-/* ============================================================================
-   ===== SENSORES Y ACTUADORES =====
-   ========================================================================== */
-function crearHCSR04() {
-  const g = new THREE.Group(); g.name = 'hc_sr04';
-  g.add(caja(4.5, 0.16, 2.0, MAT.pcb, 0, 0, 0, 'hcsr04_pcb'));
-  for (const s of [-1, 1]) {
-    g.add(cilindro(0.8, 0.8, 1.2, 12, MAT.metal, 0, -0.6, s * 1.05, 'hcsr04_transductor'));
-    g.add(cilindro(0.72, 0.72, 0.1, 12, new THREE.MeshPhongMaterial({ color: 0x3a4046 }), 0, -1.2, s * 1.05, 'hcsr04_membrana'));
-  }
-  g.add(caja(0.5, 0.5, 0.5, MAT.metal, 1.6, -0.2, 0, 'hcsr04_cristal'));
-  g.add(caja(0.22, 0.55, 2.0, new THREE.MeshPhongMaterial({ color: 0x25292d }), -2.05, -0.28, 0, 'hcsr04_pines'));
-  return g;
-}
-function crearFC37() {
-  const g = new THREE.Group(); g.name = 'fc_37';
-  const tabl = caja(5.4, 0.14, 4.0, new THREE.MeshPhongMaterial({ color: 0xbf9a3a, shininess: 55 }), 0, 0, 0, 'fc37_tablilla');
-  tabl.rotation.x = -0.32; g.add(tabl);
-  for (let i = -4; i <= 4; i++) {
-    const p = caja(0.13, 0.05, 3.4, new THREE.MeshPhongMaterial({ color: 0xd8b34f }), i * 0.55, 0.1, 0, 'fc37_pista');
-    p.rotation.x = -0.32; g.add(p);
-  }
-  const comp = new THREE.Group(); comp.position.set(0, -1.5, 1.2); comp.name = 'fc37_comparador';
-  comp.add(caja(3.0, 0.14, 1.6, MAT.pcbVerde, 0, 0, 0, 'fc37_comp_pcb'));
-  comp.add(caja(0.9, 0.35, 0.55, MAT.negro, -0.6, 0.24, 0, 'fc37_lm393'));
-  comp.add(caja(0.55, 0.5, 0.55, new THREE.MeshPhongMaterial({ color: 0x2255aa }), 0.7, 0.3, 0, 'fc37_potenciometro'));
-  g.add(comp);
-  return g;
-}
-function crearYL69() {
-  const g = new THREE.Group(); g.name = 'yl_69';
-  // Sonda vertical: 5 cm dentro del vasito con tierra, 1 cm asomando
-  g.add(caja(2.0, 6.0, 0.14, new THREE.MeshPhongMaterial({ color: 0xbf9a3a, shininess: 55 }), 0, -2.0, 0, 'yl69_sonda'));
-  for (const s of [-1, 1])
-    g.add(caja(0.45, 4.6, 0.06, new THREE.MeshPhongMaterial({ color: 0xd8b34f }), s * 0.55, -2.6, 0.08, 'yl69_pua'));
-  const comp = new THREE.Group(); comp.position.set(0, 1.25, 0); comp.name = 'yl69_lm393';
-  comp.add(caja(3.0, 0.14, 1.6, MAT.pcbVerde, 0, 0, 0, 'yl69_comp_pcb'));
-  comp.add(caja(0.9, 0.35, 0.55, MAT.negro, -0.6, 0.24, 0, 'yl69_chip_lm393'));
-  comp.add(caja(0.55, 0.5, 0.55, new THREE.MeshPhongMaterial({ color: 0x2255aa }), 0.7, 0.3, 0, 'yl69_potenciometro'));
-  g.add(comp);
-  return g;
-}
-function crearBuzzer() {
-  const g = new THREE.Group(); g.name = 'buzzer';
-  g.add(cilindro(0.65, 0.65, 0.85, 14, MAT.negro, 0, 0.43, 0, 'buzzer_capsula'));
-  g.add(cilindro(0.16, 0.16, 0.06, 8, new THREE.MeshPhongMaterial({ color: 0x8d949a }), 0, 0.87, 0, 'buzzer_orificio'));
-  g.add(caja(1.5, 0.12, 1.0, MAT.pcbVerde, 0, 0.05, 0, 'buzzer_soporte'));
-  g.add(caja(0.5, 0.4, 0.3, MAT.negro, 0.85, 0.25, 0.35, 'buzzer_transistor'));
-  const halo = new THREE.Mesh(new THREE.SphereGeometry(1.9, 14, 10), MAT.halo);
-  halo.position.set(0, 0.5, 0); halo.name = 'buzzer_halo'; halo.castShadow = false;
-  g.add(halo); g.userData.halo = halo;
-  return g;
-}
-function crearCaseta() {
-  const g = new THREE.Group(); g.name = 'caseta_control';
-  g.add(caja(3.6, 2.6, 3.0, MAT.muro, 0, 1.3, 0, 'caseta_muros'));
-  const techo = new THREE.Mesh(new THREE.ConeGeometry(2.85, 1.2, 4), MAT.teja);
-  techo.position.set(0, 3.2, 0); techo.rotation.y = Math.PI / 4;
-  techo.castShadow = true; techo.name = 'caseta_techo';
-  g.add(techo);
-  g.add(caja(0.9, 1.5, 0.1, MAT.madera, 0, 0.75, 1.52, 'caseta_puerta'));
-  g.add(caja(0.9, 0.7, 0.1, MAT.vidrio, -1.2, 1.6, 1.52, 'caseta_ventana'));
-  return g;
-}
-
-const hcsr04 = crearHCSR04();
-const fc37   = crearFC37();
-const yl69   = crearYL69();
-const buzzer = crearBuzzer();
-const caseta = crearCaseta();
-grupoSensores.add(hcsr04, fc37, yl69);
-grupoActuadores.add(buzzer, caseta);
-
-// --- Distribución "colgado del puente" (única) ---
-const POS = {
-  fc37:   { x: -15.0, z: 4.4, alto: 4.5 },     // mástil junto al puente, del lado de aguas arriba
-  yl69:   { x: -3.0,  z: 4.4 },                // en un vasito con tierra enterrado en la llanura
-  caseta: { x: -5.0,  z: 10.5 }                // terraza del frente
-};
-hcsr04.position.set(P.x, yHC, K.zc);
-hcsr04.rotation.y = Math.PI / 2;                 // transductores a lo largo del río
-fc37.position.set(POS.fc37.x, cotaTerreno(POS.fc37.x, POS.fc37.z) + POS.fc37.alto, POS.fc37.z);
-yl69.position.set(POS.yl69.x, T.yCama + 0.05, POS.yl69.z);
-caseta.position.set(POS.caseta.x, cotaTerreno(POS.caseta.x, POS.caseta.z), POS.caseta.z);
-caseta.scale.setScalar(0.75);                                 // v2.3: caseta más chica
-const DESFASE_BUZZER = new THREE.Vector3(2.1, 1.9, 0.4);     // sirena en un poste junto a la caseta
-buzzer.position.copy(caseta.position).add(DESFASE_BUZZER);
-
-// Vasito con tierra para el YL-69 (sólo asoma la tierra)
-grupoSensores.add(cilindro(1.5, 1.3, 4.6, 16, MAT.tierra, POS.yl69.x, T.yCama - 2.27, POS.yl69.z, 'vaso_tierra_yl69'));
-
-// Cono del ultrasonido (~30°): deja ver que la huella cae dentro del canal
-const conoHC = new THREE.Mesh(new THREE.ConeGeometry(1, 1, 28, 1, true),
-  new THREE.MeshBasicMaterial({ color: 0xe8a33a, transparent: true, opacity: 0.17, side: THREE.DoubleSide, depthWrite: false }));
-conoHC.name = 'cono_ultrasonido';
-grupoSensores.add(conoHC);
-const TAN15 = Math.tan(15 * Math.PI / 180);
-function actualizarCono(yAgua) {
-  const d = Math.max(0.2, yCaraSensor - yAgua), r = d * TAN15;
-  conoHC.scale.set(r, d, r);
-  conoHC.position.set(P.x, yAgua + d / 2, K.zc);
-}
-
-/* ============================================================================
-   ===== CABLEADO Y POSTES =====
-   Rojo = 5V, negro = GND, colores = datos. Todos los mazos van por el borde
-   FRONTAL de la terraza y bajan por la cara del unicel a la zona seca: no
-   cruzan el río ni pasan sobre el tóper.
-   ========================================================================== */
-const grupoCables = new THREE.Group(); grupoCables.name = 'cableado';
-const grupoPostes = new THREE.Group(); grupoPostes.name = 'postes';
-grupoSensores.add(grupoCables, grupoPostes);
-
-const ENTRADA = new THREE.Vector3(SE.x0 + 0.9, pby + 0.95, pbz + 2.2);
-const ENTRADA_SERVO = new THREE.Vector3(SE.x0 + 1.2, pby + 0.95, pbz - 2.1);
-const zBorde = B.z / 2 - 0.4;
-const _matsCable = {};
-function materialCable(color) {
-  if (!_matsCable[color]) _matsCable[color] = new THREE.MeshPhongMaterial({ color: color, shininess: 45 });
-  return _matsCable[color];
-}
-function limpiarGrupo(g) {
-  for (let i = g.children.length - 1; i >= 0; i--) {
-    const o = g.children[i];
-    if (o.geometry) o.geometry.dispose();
-    g.remove(o);
-  }
-}
-function tuboCable(puntos, color) {
-  const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', 0.3);
-  const m = new THREE.Mesh(new THREE.TubeGeometry(curva, 40, 0.075, 4, false), materialCable(color));
-  m.castShadow = false; m.name = 'cable';
-  return m;
-}
-const V = (x, y, z) => new THREE.Vector3(x, y, z);
-
-// "inicio" son los primeros puntos propios de cada pieza; el último ya toca el suelo
-function rutaHastaBahia(inicio, d) {
-  const pts = inicio.map(p => V(p.x + d, p.y, p.z));
-  const ult = inicio[inicio.length - 1];
-  const x0 = ult.x + d, yTer = T.yCama + T.paso + 0.3;
-  const zT = frenteTerraza(ult.x);
-  if (ult.z < zT - 0.6) {                                   // sube el escalón de la terraza
-    pts.push(V(x0, T.yCama + 0.3, zT - 0.5));
-    pts.push(V(x0, yTer, zT + 0.6));
-  }
-  pts.push(V(x0, yTer, zBorde + d * 0.5));
-  pts.push(V(mezclar(x0, T.xMax - 0.7, 0.5), yTer, zBorde + d));
-  pts.push(V(T.xMax - 0.7, yTer, zBorde + d));
-  pts.push(V(T.xMax + 0.45, yTer - 2.0, zBorde - 0.3 + d));  // baja por la cara del unicel
-  pts.push(V(T.xMax + 1.0, pby + 1.8, zBorde - 1.2 + d));
-  pts.push(V(ENTRADA.x + d, ENTRADA.y, ENTRADA.z));
-  return pts;
-}
-
-function ponerPoste(x, z, yTop) {
-  const yBase = cotaTerreno(x, z), h = yTop - yBase;
-  if (h < 0.6) return;
-  grupoPostes.add(cilindro(0.16, 0.24, h, 7, MAT.madera, x, yBase + h / 2, z, 'poste'));
-  grupoPostes.add(cilindro(0.45, 0.6, 0.3, 8, MAT.hormigon, x, yBase + 0.15, z, 'poste_dado'));
-}
-
-function reconstruirCableado() {
-  limpiarGrupo(grupoCables);
-  limpiarGrupo(grupoPostes);
-
-  const f = fc37.position, b = buzzer.position, y = yl69.position;
-  ponerPoste(f.x, f.z - 0.3, f.y - 1.2);                    // mástil del FC-37
-  ponerPoste(b.x, b.z, b.y);                                // poste de la sirena
-
-  const mazos = [
-    { colores: [CONFIG.cable.v5, CONFIG.cable.gnd, CONFIG.cable.dato, CONFIG.cable.dato2],   // HC-SR04: 4 hilos
-      inicio: [V(P.x + 0.4, yHC + 0.1, K.zc + 2.1), V(P.x + 1.9, yTablero - 0.3, K.zc + 2.7),
-               V(P.x + 1.9, yTablero - 0.3, P.z1 - 0.3), V(P.x + 1.9, T.yCama + 1.6, P.z1 + 0.5),
-               V(P.x + 1.9, T.yCama + 0.3, P.z1 + 1.3)] },
-    { colores: [CONFIG.cable.v5, CONFIG.cable.gnd, CONFIG.cable.dato3, 0x8a5bc4],
-      inicio: [V(f.x + 0.2, f.y - 1.5, f.z + 1.0), V(f.x + 0.35, f.y - 2.6, f.z + 0.1),
-               V(f.x + 0.35, cotaTerreno(f.x, f.z) + 0.3, f.z + 0.4)] },
-    { colores: [CONFIG.cable.v5, CONFIG.cable.gnd, 0x3a9c8c],
-      inicio: [V(y.x + 0.6, y.y + 1.0, y.z), V(y.x + 0.9, T.yCama + 0.3, y.z + 0.9)] },
-    { colores: [CONFIG.cable.v5, CONFIG.cable.gnd],
-      inicio: [V(b.x + 0.3, b.y - 0.1, b.z), V(b.x + 0.3, cotaTerreno(b.x, b.z) + 0.3, b.z + 0.5)] }
-  ];
-  mazos.forEach(mz => mz.colores.forEach((col, i) => {
-    const d = (i - (mz.colores.length - 1) / 2) * 0.2;
-    grupoCables.add(tuboCable(rutaHastaBahia(mz.inicio, d), col));
-  }));
-
-  // Servo: mazo corto directo a la protoboard (queda junto a la zona seca)
-  [CONFIG.cable.v5, CONFIG.cable.gnd, 0xd79a1e].forEach((col, i) => {
-    const d = (i - 1) * 0.2;
-    grupoCables.add(tuboCable([
-      V(CP.x + 0.2 + d, yEje - 1.7, K.zc + CP.ancho / 2 + 2.0),
-      V(CP.x + 0.25 + d, 4.4, SE.z0 - 0.6),
-      V(CP.x + 0.3 + d, 2.6, SE.z0 + 0.3),
-      V(ENTRADA_SERVO.x + d, ENTRADA_SERVO.y, ENTRADA_SERVO.z)
-    ], col));
-  });
-}
-reconstruirCableado();
-
-// Cableado interno: ESP32 -> relé y relé -> bomba (entra al tóper por encima)
-(function cableadoBahia() {
-  const g = new THREE.Group(); g.name = 'cableado_bahia';
-  const tubo = (pts, col) => g.add(new THREE.Mesh(
-    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.35), 40, 0.075, 4, false), materialCable(col)));
-  const xb = bomba.position.x, yb = bomba.position.y, zb = bomba.position.z;
-  const xr = moduloRele.position.x + 1.4;                   // bornera del relé
-  [[CONFIG.cable.v5, 0.2], [CONFIG.cable.gnd, -0.2]].forEach(([col, o]) => tubo([
-    V(xr + o, pby + 1.0, SE.z1 - 2.0), V(xr + 0.2 + o, 5.0, SE.z0 + 0.6), V(xr + 0.3 + o, 4.6, SE.z0 - 0.9),
-    V(xr + 0.2 + o, 1.0, RS.z1 - 1.0), V(xb + 0.8 + o, -2.0, RS.z1 - 4.0), V(xb + 0.6 + o, yb + 2.2, zb + 1.6)
-  ], col));
-  tubo([V(esp32.position.x + 2.0, pby + 1.2, pbz + 1.0), V(esp32.position.x + 4.4, pby + 2.6, pbz + 2.6),
-        V(moduloRele.position.x - 1.6, pby + 1.0, SE.z1 - 1.35)], 0x9a5bd0);
-  grupoBahia.add(g);
-})();
-
-/* ============================================================================
-   ===== AMBIENTACIÓN =====
-   Geometrías y materiales compartidos. Árboles en la sierra, arbustos en las
-   orillas, rocas en el nacimiento y tres casas en la llanura: son las que se
-   inundarían primero.
-   ========================================================================== */
-const geoTronco   = new THREE.CylinderGeometry(0.13, 0.19, 1, 6); geoTronco.translate(0, 0.5, 0);
-const geoCopaBaja = new THREE.ConeGeometry(0.85, 1.9, 7);
-const geoCopaAlta = new THREE.ConeGeometry(0.60, 1.5, 7);
-const geoRoca     = new THREE.IcosahedronGeometry(0.5, 0);
-const geoArbusto  = new THREE.IcosahedronGeometry(0.45, 0);
-
-function arbol(e) {
-  const g = new THREE.Group(); g.name = 'arbol';
-  const hT = 1.5 * e;
-  const tr = new THREE.Mesh(geoTronco, MAT.tronco);
-  tr.scale.set(e, hT, e); tr.castShadow = true; tr.name = 'arbol_tronco'; g.add(tr);
-  const c1 = new THREE.Mesh(geoCopaBaja, MAT.copaA);
-  c1.position.y = hT + 0.75 * e; c1.scale.setScalar(e); c1.castShadow = true; c1.name = 'arbol_copa'; g.add(c1);
-  const c2 = new THREE.Mesh(geoCopaAlta, MAT.copaB);
-  c2.position.y = hT + 1.75 * e; c2.scale.setScalar(e); c2.castShadow = true; c2.name = 'arbol_copa_alta'; g.add(c2);
-  return g;
-}
-function casa(ancho, fondo) {
-  const g = new THREE.Group(); g.name = 'casa';
-  g.add(caja(ancho, 1.9, fondo, MAT.muro, 0, 0.95, 0, 'casa_muros'));
-  const techo = new THREE.Mesh(new THREE.ConeGeometry(Math.max(ancho, fondo) * 0.78, 1.1, 4), MAT.teja);
-  techo.position.y = 2.45; techo.rotation.y = Math.PI / 4; techo.castShadow = true; techo.name = 'casa_techo';
-  g.add(techo);
-  g.add(caja(0.55, 1.0, 0.08, MAT.madera, 0, 0.5, fondo / 2 + 0.02, 'casa_puerta'));
-  return g;
-}
-function roca(x, z, s) {
-  const r = new THREE.Mesh(geoRoca, MAT.roca);
-  r.position.set(x, cotaTerreno(x, z) + 0.12 * s, z);
-  r.scale.set(entre(0.7, 1.4) * s, entre(0.45, 0.9) * s, entre(0.7, 1.3) * s);
-  r.rotation.set(entre(0, 3), entre(0, 3), entre(0, 3));
-  r.castShadow = true; r.receiveShadow = true; r.name = 'roca';
-  grupoAmbientacion.add(r);
-}
-
-const CASAS = [{ x: -19.0, z: 5.6 }, { x: 0.6, z: 6.4 }, { x: 3.6, z: 3.4 }];
-const yPico = T.yCama + T.capasSierra * T.paso;          // 12.5: nada pasa de aquí
-(function poblarAmbientacion() {
-  const cerca = (x, z, px, pz, r) => Math.abs(x - px) < r && Math.abs(z - pz) < r;
-  const libre = (x, z) =>
-    x < T.xMax - 1.2 && x > T.xMin + 1 && Math.abs(z) < B.z / 2 - 0.8 &&
-    !(z > zZanja0 - 0.9 && z < zZanja1 + 0.9) &&                          // río y sus orillas
-    !(Math.abs(x - P.x) < 3.0 && z > P.z0 - 0.8 && z < P.z1 + 1.4) &&     // puente
-    !(x < xZanja0 + 1.2 && z > zZanja0 - 1 && z < zZanja1 + 1) &&         // nacimiento
-    !cerca(x, z, POS.fc37.x, POS.fc37.z, 1.8) && !cerca(x, z, POS.yl69.x, POS.yl69.z, 2.2) &&
-    !cerca(x, z, POS.caseta.x + 1.2, POS.caseta.z, 3.6) &&
-    !CASAS.some(c => cerca(x, z, c.x, c.z, 2.6));
-
-  // Árboles: un árbol mide 4 × su escala; se recorta para no pasar de la cima
-  const tallas = [0.45, 0.55, 0.62];
-  for (let i = 0; i < 20; i++) {                 // árboles: sierra escalonada
-    const x = entre(T.xMin + 1.2, T.xMax - 1.5);
-    const z = entre(-12.0, frenteSierra(0, x) - 0.5);
-    if (!libre(x, z)) continue;
-    const eMax = (yPico - cotaTerreno(x, z)) / 4.0;
-    if (eMax < 0.35) continue;
-    const a = arbol(Math.min(eMax, tallas[i % 3] * entre(0.9, 1.12)));
-    a.position.set(x, cotaTerreno(x, z) - 0.05, z);
-    a.rotation.y = entre(0, Math.PI * 2);
-    grupoAmbientacion.add(a);
-  }
-  for (let i = 0; i < 8; i++) {                  // rocas: pie de la sierra y llanura
-    const x = entre(T.xMin + 1.2, T.xMax - 1.5);
-    const z = aleatorio() < 0.5 ? entre(-11.5, frenteSierra(0, x) - 0.4) : entre(1.8, 8.2);
-    const sR = entre(0.6, 1.1);
-    if (libre(x, z) && cotaTerreno(x, z) < yPico) roca(x, z, sR);      // ninguna sobre la cima
-  }
-  // Rocas del nacimiento, alrededor de donde asoma la manguera
-  [[-0.9, -1.4, 1.0], [0.9, -1.6, 0.9], [-0.9, 1.3, 0.9], [0.9, 1.5, 0.8], [-0.1, 2.4, 0.7], [0.2, -2.6, 0.7]]
-    .forEach(([dx, dz, s]) => roca(xNac + dx, zNac + dz, s));
-  for (let i = 0; i < 8; i++) {                  // arbustos en las orillas del río
-    const x = entre(T.xMin + 3, T.xMax - 1.5);
-    const z = entre(1.7, 8.0);
-    if (!libre(x, z)) continue;
-    const b = new THREE.Mesh(geoArbusto, MAT.arbusto);
-    b.position.set(x, cotaTerreno(x, z) + 0.2, z);
-    b.scale.set(entre(0.9, 1.7), entre(0.6, 1.1), entre(0.9, 1.7));
-    b.rotation.y = entre(0, 3); b.castShadow = true; b.name = 'arbusto';
-    grupoAmbientacion.add(b);
-  }
-  CASAS.forEach(s => {
-    const c = casa(entre(2.2, 2.8), entre(2.0, 2.5));
-    c.position.set(s.x, cotaTerreno(s.x, s.z), s.z);
-    c.rotation.y = entre(-0.4, 0.4);
-    grupoAmbientacion.add(c);
-  });
-})();
+  V(K.x1 - 2.2, 1.6, zbRio), V(K.x1 + 0.2, 1.3, zbRio), V(K.x1 + 1.4, -0.8, zbRio), V(K.x1 + 1.9, -3.6, zbRio)
+]);
 
 /* ============================================================================
    ===== ETIQUETAS DE COMPONENTES =====
@@ -1202,66 +1185,56 @@ const contEtiquetas = document.getElementById('etiquetas');
 
 // Marcadores invisibles para etiquetar piezas que no son un objeto suelto
 function marca(x, y, z, grupo) { const o = new THREE.Object3D(); o.position.set(x, y, z); grupo.add(o); return o; }
-const marcaRio        = marca(K.x0 + 3.5, yCoronaCanal, K.zc - K.anchoInt / 2, grupoCanal);
-const marcaRegleta    = marca(P.x + 4.0, K.pisoY + 5.6, K.zc - K.anchoInt / 2, grupoCanal);
-const marcaCresta     = marca(CP.x, yCresta, K.zc - CP.ancho / 2, grupoPuente);
-const marcaCanaleta   = marca(CA.x0 + 2.6, yPisoCanaleta(CA.x0 + 2.6) + CA.altoPared, K.zc + CA.anchoInt / 2, grupoCanal);
-const marcaNacimiento = marca(xNac, T.yCama + 1.2, zNac, grupoBahia);
-const marcaToper      = marca(RS.x1, -RS.prof * 0.45, RS.z1, grupoBahia);
+const marcaRio        = marca(X(K.x0 + 5), K.alto, Z(K.z0), grupoCanal);
+const marcaCompuerta  = marca(X(CP.x + 0.2), CP.yEje - 4.5, Z(CP.z0 + 1), grupoPuente);
+const marcaNacimiento = marca(X(nac.x), yTope + 1.2, Z(nac.z), grupoBahia);
+const marcaToper      = marca(X(TP.x1), -3.5, Z(TP.z1), grupoBahia);
 
-/* ===== COTAS GENERALES (v2.3) =====
+/* ===== COTAS GENERALES =====
    Largo al frente y ancho a la derecha, sobre la mesa; alto en la esquina
-   trasera izquierda, de la mesa a la cima de la sierra. */
-const yMesa = -B.espesor - CONFIG.patas.alto;
-const altoTotal = CONFIG.patas.alto + B.espesor + yPico;
+   trasera izquierda, de la mesa a la cara de arriba del bloque. */
+const altoTotal = CONFIG.patas.alto + B.espesor + yTope;
 (function construirCotas() {
-  const mat = MAT.guia;
-  const pts = [];
-  const seg = (a, b) => { pts.push(a, b); };
-  const tic = (p, ux, uz, uy) => seg(V(p.x - ux, p.y - uy, p.z - uz), V(p.x + ux, p.y + uy, p.z + uz));
-  const xa = -B.x / 2, xb = B.x / 2, za = -B.z / 2, zb = B.z / 2, sep = 2.6, y0 = yMesa + 0.04;
-  // Largo (45): línea al frente de la tabla
+  const pts = [], seg = (a, b) => pts.push(a, b);
+  const P3 = (x, y, z) => new THREE.Vector3(x, y, z);
+  const tic = (p, ux, uz, uy) => seg(P3(p.x - ux, p.y - uy, p.z - uz), P3(p.x + ux, p.y + uy, p.z + uz));
+  const xa = -B.largo / 2, xb = B.largo / 2, za = -B.ancho / 2, zb = B.ancho / 2, sep = 3.2, y0 = yMesa + 0.04;
+  // Largo: línea al frente de la tabla
   const zL = zb + sep;
-  seg(V(xa, y0, zb + 0.4), V(xa, y0, zL + 0.7)); seg(V(xb, y0, zb + 0.4), V(xb, y0, zL + 0.7));
-  seg(V(xa, y0, zL), V(xb, y0, zL));
-  tic(V(xa, y0, zL), 0.45, 0.45, 0); tic(V(xb, y0, zL), 0.45, 0.45, 0);
-  // Ancho (25): línea a la derecha
+  seg(P3(xa, y0, zb + 0.4), P3(xa, y0, zL + 0.7)); seg(P3(xb, y0, zb + 0.4), P3(xb, y0, zL + 0.7));
+  seg(P3(xa, y0, zL), P3(xb, y0, zL)); tic(P3(xa, y0, zL), 0.45, 0.45, 0); tic(P3(xb, y0, zL), 0.45, 0.45, 0);
+  // Ancho: línea a la derecha
   const xL = xb + sep;
-  seg(V(xb + 0.4, y0, za), V(xL + 0.7, y0, za)); seg(V(xb + 0.4, y0, zb), V(xL + 0.7, y0, zb));
-  seg(V(xL, y0, za), V(xL, y0, zb));
-  tic(V(xL, y0, za), 0.45, 0.45, 0); tic(V(xL, y0, zb), 0.45, 0.45, 0);
-  // Alto (≈20): vertical en la esquina trasera izquierda
-  const xH = xa - sep;
-  seg(V(xa - 0.4, yPico, za), V(xH - 0.7, yPico, za)); seg(V(xa - 0.4, y0, za), V(xH - 0.7, y0, za));
-  seg(V(xH, y0, za), V(xH, yPico, za));
-  tic(V(xH, yPico, za), 0.45, 0, 0.45); tic(V(xH, y0, za), 0.45, 0, 0.45);
-  const l = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), mat);
+  seg(P3(xb + 0.4, y0, za), P3(xL + 0.7, y0, za)); seg(P3(xb + 0.4, y0, zb), P3(xL + 0.7, y0, zb));
+  seg(P3(xL, y0, za), P3(xL, y0, zb)); tic(P3(xL, y0, za), 0.45, 0.45, 0); tic(P3(xL, y0, zb), 0.45, 0.45, 0);
+  // Alto: vertical en la esquina trasera izquierda (el bloque sobresale 1.2 cm)
+  const xBl = X(xIzq), xH = xBl - sep;
+  seg(P3(xBl - 0.4, yTope, za), P3(xH - 0.7, yTope, za)); seg(P3(xa - 0.4, y0, za), P3(xH - 0.7, y0, za));
+  seg(P3(xH, y0, za), P3(xH, yTope, za)); tic(P3(xH, yTope, za), 0.45, 0, 0.45); tic(P3(xH, y0, za), 0.45, 0, 0.45);
+  const l = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), MAT.guia);
   l.name = 'cotas'; grupoCotas.add(l);
 })();
-const marcaCotaLargo = marca(0, yMesa, B.z / 2 + 2.6, grupoCotas);
-const marcaCotaAncho = marca(B.x / 2 + 2.6, yMesa, 0, grupoCotas);
-const marcaCotaAlto  = marca(-B.x / 2 - 2.6, (yMesa + yPico) / 2 + 1.0, -B.z / 2, grupoCotas);
-const fmt = n => (Math.round(n * 10) / 10).toString();
-const litrosToper = (RS.x1 - RS.x0) * (RS.z1 - RS.z0) * RS.prof / 1000;
+const marcaCotaLargo = marca(0, yMesa, B.ancho / 2 + 3.2, grupoCotas);
+const marcaCotaAncho = marca(B.largo / 2 + 3.2, yMesa, 0, grupoCotas);
+const marcaCotaAlto  = marca(X(xIzq) - 3.2, (yMesa + yTope) / 2 + 1, -B.ancho / 2, grupoCotas);
 
 const ETIQUETAS = [
-  { obj: hcsr04,          capa: 'sensores',   modelo: 'HC-SR04',        pines: 'TRIG 33 / ECHO 32 · a ' + fmt(P.sensorSobreBorde) + ' cm del borde', desfase: new THREE.Vector3(-3.0, 4.0, -5.0), nuevo: true },
-  { obj: marcaRio,        capa: 'canal',      modelo: 'Río incrustado', pines: 'canal ' + fmt(K.x1 - K.x0) + ' × ' + fmt(K.anchoInt) + ' × ' + fmt(K.altoInt) + ' cm', desfase: new THREE.Vector3(-1.5, 6.0, -5.0), nuevo: true },
-  { obj: marcaRegleta,    capa: 'canal',      modelo: 'Regleta',        pines: '1 cm ≡ 80 cm',          desfase: new THREE.Vector3( 2.4, 6.8, -5.2) },
-  { obj: fc37,            capa: 'sensores',   modelo: 'FC-37',          pines: 'AO 34 (ADC1)',         desfase: new THREE.Vector3(-2.2, 2.8,  2.8) },
-  { obj: yl69,            capa: 'sensores',   modelo: 'YL-69 + LM393',  pines: 'AO 35 (ADC1)',          desfase: new THREE.Vector3( 1.0, 4.5,  3.0) },
-  { obj: marcaCresta,     capa: 'puente',     modelo: 'Compuerta = vertedero', pines: 'cresta 4 cm ≡ 320 cm', desfase: new THREE.Vector3( 0.5, 7.2, -5.0) },
-  { obj: marcaCanaleta,   capa: 'canal',      modelo: 'Canaleta',       pines: 'retorno al tóper',      desfase: new THREE.Vector3( 4.0, 3.2,  5.6) },
-  { obj: marcaNacimiento, capa: 'bahia',      modelo: 'Nacimiento',     pines: 'manguera por ranura bajo el unicel', desfase: new THREE.Vector3(-1.2, 4.8, 5.2), nuevo: true },
-  { obj: buzzer,          capa: 'actuadores', modelo: 'Buzzer pasivo',  pines: 'GPIO14', desfase: new THREE.Vector3( 2.4, 2.8, -0.8) },
-  { obj: servo,           capa: 'actuadores', modelo: 'Servo SG90',     pines: 'GPIO13 · 0–90°',        desfase: new THREE.Vector3( 1.6, 4.0,  4.8) },
-  { obj: esp32,           capa: 'bahia',      modelo: 'ESP32-WROOM-32', pines: 'DevKit V1 · 30 pines',  desfase: new THREE.Vector3(-1.3, 4.0,  3.7) },
-  { obj: moduloRele,      capa: 'bahia',      modelo: 'Relé 1 canal',   pines: 'enciende la bomba',     desfase: new THREE.Vector3( 2.0, 4.5,  1.8) },
-  { obj: bomba,           capa: 'bahia',      modelo: 'Bomba 5V',       pines: 'recircula el agua',     desfase: new THREE.Vector3( 4.8, 4.0, -6.0) },
-  { obj: marcaToper,      capa: 'bahia',      modelo: 'Tóper ~' + fmt(litrosToper) + ' L', pines: fmt(RS.x1 - RS.x0) + ' × ' + fmt(RS.z1 - RS.z0) + ' × ' + fmt(RS.prof) + ' cm · ' + fmt(CONFIG.bahia.litros) + ' L de agua', desfase: new THREE.Vector3( 4.0, -0.8, 4.8), nuevo: true },
-  { obj: marcaCotaLargo,  capa: 'cotas', cota: true, modelo: fmt(B.x) + ' cm',  pines: 'largo',  desfase: new THREE.Vector3(0, 0, 0) },
-  { obj: marcaCotaAncho,  capa: 'cotas', cota: true, modelo: fmt(B.z) + ' cm',  pines: 'ancho',  desfase: new THREE.Vector3(0, 0, 0) },
-  { obj: marcaCotaAlto,   capa: 'cotas', cota: true, modelo: fmt(altoTotal) + ' cm', pines: 'alto total', desfase: new THREE.Vector3(-0.6, 0, 0) }
+  { obj: hcsr04,          capa: 'sensores',   modelo: 'HC-SR04',            pines: 'TRIG 33 / ECHO 32 · ' + fmt(CONFIG.sensor.distVacio) + ' cm al fondo', desfase: new THREE.Vector3(-4.0, 6.0, -6.0), nuevo: true },
+  { obj: placaLluvia,     capa: 'sensores',   modelo: 'Placa de lluvia',    pines: 'LM393 → AO 34 (ADC1)',      desfase: new THREE.Vector3(-3.0, 4.0, -4.0) },
+  { obj: hw080,           capa: 'sensores',   modelo: 'HW-080 (YL-69)',     pines: 'LM393 → AO 35 (ADC1)',      desfase: new THREE.Vector3(-1.0, 5.0, 4.5) },
+  { obj: farol,           capa: 'actuadores', modelo: 'Farol · LED RGB',    pines: 'R 27 · G 26 · B 25',        desfase: new THREE.Vector3(-1.5, 13.0, 3.5), nuevo: true },
+  { obj: servo,           capa: 'actuadores', modelo: 'Servo MG995',        pines: 'GPIO13 · fuente 5 V ext.',  desfase: new THREE.Vector3(6.0, 3.0, 5.0), nuevo: true },
+  { obj: marcaCompuerta,  capa: 'puente',     modelo: 'Compuerta abatible', pines: '0° cerrada / 90° abierta',  desfase: new THREE.Vector3(6.0, 6.0, -6.0) },
+  { obj: marcaRio,        capa: 'canal',      modelo: 'Río',                pines: 'contenedor ' + fmt(K.x1 - K.x0) + ' × ' + fmt(K.z1 - K.z0) + ' cm', desfase: new THREE.Vector3(-2.0, 7.0, -6.0), nuevo: true },
+  { obj: marcaNacimiento, capa: 'bahia',      modelo: 'Nacimiento',         pines: 'manguera desde el tóper',   desfase: new THREE.Vector3(-3.0, 6.0, 3.0) },
+  { obj: marcaToper,      capa: 'bahia',      modelo: 'Tóper ~1.2 L',       pines: fmt(TP.x1 - TP.x0) + ' × ' + fmt(TP.z1 - TP.z0) + ' × ' + fmt(yBajo - TP.fondo) + ' cm', desfase: new THREE.Vector3(6.0, -1.0, 5.0), nuevo: true },
+  { obj: bomba,           capa: 'bahia',      modelo: 'Bomba 5 V',          pines: 'recircula el agua',         desfase: new THREE.Vector3(6.0, 2.5, -6.0) },
+  { obj: moduloRele,      capa: 'bahia',      modelo: 'Relé 1 canal',       pines: 'bajo la tabla · diagrama S → D23', desfase: new THREE.Vector3(5.0, -3.0, 4.0) },
+  { obj: esp32,           capa: 'bahia',      modelo: 'ESP32 DevKit V1',    pines: 'proto 2 · USB-C',           desfase: new THREE.Vector3(-5.0, -4.0, -3.0) },
+  { obj: buzzer,          capa: 'bahia',      modelo: 'Buzzer pasivo',      pines: 'GPIO14 · proto 1',          desfase: new THREE.Vector3(2.0, -4.5, 4.0) },
+  { obj: marcaCotaLargo,  capa: 'cotas', cota: true, modelo: fmt(B.largo) + ' cm',  pines: 'largo',          desfase: new THREE.Vector3(0, 0, 0) },
+  { obj: marcaCotaAncho,  capa: 'cotas', cota: true, modelo: fmt(B.ancho) + ' cm',  pines: 'ancho',          desfase: new THREE.Vector3(0, 0, 0) },
+  { obj: marcaCotaAlto,   capa: 'cotas', cota: true, modelo: fmt(altoTotal) + ' cm', pines: 'alto al bloque', desfase: new THREE.Vector3(-0.6, 0, 0) }
 ];
 
 ETIQUETAS.forEach(e => {
@@ -1359,13 +1332,22 @@ function fijarCompuerta(abierta) {
 function fijarBuzzer(modo) {
   estado.buzzer = (modo === 'sonando' || modo === 'intermitente') ? modo : 'apagado';
 }
+// LED RGB del farol: el color que publica el nodo ('verde' | 'amarillo' | 'rojo')
+const COLOR_LED = { verde: CONFIG.colores.ledBajo, amarillo: CONFIG.colores.haloMedio, rojo: CONFIG.colores.haloAlto };
+function fijarLed(color) {
+  const hex = COLOR_LED[String(color).toLowerCase()];
+  ledFarol.material.color.setHex(hex === undefined ? CONFIG.colores.ledApagado : hex);
+  if (hex !== undefined) luzFarol.color.setHex(hex);
+  luzFarol.intensity = hex === undefined ? 0 : 0.7;
+  if (hex !== undefined) brilloFarol.material.color.setHex(hex);
+  brilloFarol.material.opacity = hex === undefined ? 0 : 0.55;
+}
 function fijarLluvia(pct) { estado.lluvia = limitar(Number(pct) || 0, 0, 100); }
 function mostrarComponentes(ver) {
   estado.componentes = !!ver;
   grupoFlujo.visible = grupoGuias.visible = grupoCotas.visible = conoHC.visible = estado.componentes;
 }
 mostrarComponentes(false);
-ledRele.material.color.setHex(0xd8402c);
 
 /* ============================================================================
    ===== LLUVIA =====
@@ -1374,7 +1356,7 @@ ledRele.material.color.setHex(0xd8402c);
 const LL = CONFIG.lluvia;
 const gotas = [];
 for (let i = 0; i < LL.gotas; i++)
-  gotas.push({ x: entre(-B.x / 2, B.x / 2), y: entre(0, LL.alto), z: entre(-B.z / 2, B.z / 2), v: entre(20, 30) });
+  gotas.push({ x: entre(-B.largo / 2, B.largo / 2), y: entre(0, LL.alto), z: entre(-B.ancho / 2, B.ancho / 2), v: entre(20, 30) });
 const posLluvia = new Float32Array(LL.gotas * 6);
 const geoLluvia = new THREE.BufferGeometry();
 geoLluvia.setAttribute('position', new THREE.BufferAttribute(posLluvia, 3));
@@ -1416,9 +1398,9 @@ const desfase = { x: 0, y: 0, ox: 0, oy: 0 };   // centro de la zona respecto al
 let primeraMedida = true;
 
 function posicionInicio() {
-  const V = CONFIG.vista, tan = Math.tan(THREE.MathUtils.degToRad(CONFIG.camara.fov / 2));
-  const dAncho = (V.ancho / 2) * altoVista / (tan * zona.w * V.margen);
-  const dAlto = (V.alto / 2) * altoVista / (tan * zona.h * V.margen);
+  const VI = CONFIG.vista, tan = Math.tan(THREE.MathUtils.degToRad(CONFIG.camara.fov / 2));
+  const dAncho = (VI.ancho / 2) * altoVista / (tan * zona.w * VI.margen);
+  const dAlto = (VI.alto / 2) * altoVista / (tan * zona.h * VI.margen);
   const d = limitar(Math.max(dAncho, dAlto), CONFIG.camara.distMin, CONFIG.camara.distMax);
   return objetivoInicio.clone().addScaledVector(dirInicio, d);
 }
@@ -1511,7 +1493,7 @@ function bucle() {
   const hayRetorno = Q.q > 0.02;
   chorroNacimiento.visible = estado.bombaEncendida;
   if (estado.bombaEncendida) {
-    const h = Math.max(0.1, yBoquilla - 0.15 - Q.yA);
+    const h = Math.max(0.1, boquilla.y - 0.15 - Q.yA);
     chorroNacimiento.scale.y = h;
     chorroNacimiento.position.y = Q.yA + h / 2;
     if (!quieto) helice.rotation.z += dt * 16;
@@ -1521,8 +1503,8 @@ function bucle() {
   if (estado.componentes) {
     actualizarCono(Q.yA);
     moverCorriente(corrienteManguera, curvaManguera, t, 0.05, estado.bombaEncendida);
-    moverCorrienteRio(t, Q.yA, estado.bombaEncendida || hayRetorno);
-    moverCorriente(corrienteSalida, aperturaCompuerta > 0.5 ? curvaDescarga : curvaVertiente, t, 0.4, hayRetorno);
+    moverCorrienteRio(t, Q.yA, (estado.bombaEncendida || hayRetorno) && Q.col > 0.2);
+    moverCorriente(corrienteSalida, curvaDescarga, t, 0.4, hayRetorno);
   }
 
   // --- Buzzer: halo ámbar si es intermitente, terracota si suena ---
@@ -1569,6 +1551,7 @@ window.Escena = {
   fijarNivel: fijarNivel,             // % 0–100
   fijarCompuerta: fijarCompuerta,     // true = abierta (90°)
   fijarBuzzer: fijarBuzzer,           // 'apagado' | 'intermitente' | 'sonando'
+  fijarLed: fijarLed,                 // 'verde' | 'amarillo' | 'rojo' (campo "led" del nodo)
   fijarLluvia: fijarLluvia,           // % 0–100
   mostrarComponentes: mostrarComponentes,
   restablecerVista: function () { irAInicio(true); }
