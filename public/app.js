@@ -3,8 +3,12 @@
 /* ============================================================================
    MAQUETA DIGITAL DEL RÍO · TABLERO
    Habla directo con el broker MQTT, en paralelo a Node-RED: muestra lo que el
-   nodo publica y le ordena lo mismo que el dashboard de Node-RED (modo manual,
-   valores simulados y compuerta).
+   nodo publica y le ordena su modo:
+   · Automático: deciden las reglas del firmware con los sensores.
+   · Manual: valores simulados y compuerta desde aquí (igual que Node-RED).
+   · IA: el riesgo lo decide el modelo de Colab (tópico ia); el ESP32 lo usa
+     para el LED, el buzzer y la compuerta. Con "Simular crecida" la IA decide
+     con valores simulados.
 
    Reglas que sigue este archivo:
    · El riesgo NO se calcula aquí: se lee del nodo (los umbrales viven en el
@@ -21,7 +25,7 @@ const CONFIG = {
   topics: {
     datos:   'ucol-eq1/rio/nodo1/datos',     // sub · QoS 0 · JSON con la lectura de cada ciclo (1 s)
     estado:  'ucol-eq1/rio/nodo1/estado',    // sub · QoS 1 · "online" retenido, "offline" como Last Will
-    control: 'ucol-eq1/rio/nodo1/control',   // pub + sub · QoS 1 · retenido · JSON del modo manual
+    control: 'ucol-eq1/rio/nodo1/control',   // pub + sub · QoS 1 · retenido · JSON del modo (auto, manual o ia)
     ia:      'ucol-eq1/rio/nodo1/ia'         // sub · QoS 0 · pronóstico que publica el cuaderno de Colab (ia.js lo pinta)
   },
 
@@ -62,8 +66,8 @@ const CONFIG = {
   msConfirmacion: 3000,                      // espera a que el nodo confirme una orden
   msValor: 600,                              // animación de los números y rellenos
 
-  // "Simular crecida" (modo manual): una tormenta paso a paso, una orden por segundo,
-  // para que la IA vea la tendencia y avise antes que las reglas
+  // "Simular crecida" (modo manual o IA): una tormenta paso a paso, una orden por
+  // segundo, para que la IA vea la tendencia y avise (o abra la compuerta) antes que las reglas
   crecida: {
     pasos: 45,                               // segundos que dura
     pasosQuieto: 4,                          // primero se queda en calma (la IA junta historial)
@@ -121,16 +125,17 @@ const dom = {
   eModo: $('eModo'), eModoTxt: $('eModoTxt'),
   eCompuerta: $('eCompuerta'), eCompuertaTxt: $('eCompuertaTxt'),
   eBuzzer: $('eBuzzer'), eBuzzerTxt: $('eBuzzerTxt'),
-  swModo: $('swModo'), swCompuerta: $('swCompuerta'), ctlCompuerta: $('ctlCompuerta'),
+  selModo: $('selModo'), swCompuerta: $('swCompuerta'), ctlCompuerta: $('ctlCompuerta'),
   cardHistorial: $('cardHistorial'), btnPlegar: $('btnPlegar'),
   btnCrecida: $('btnCrecida'), btnCrecidaTxt: $('btnCrecidaTxt')
 };
+const botonesModo = Array.from(dom.selModo.querySelectorAll('button[data-modo]'));   // Auto, Manual, IA
 
 /* ============================================================================
    ===== ESTADO =====
    nodo  = lo que el nodo confirma (tópico de datos).
    orden = lo que se le ordena (tópico de control, lo publique quien lo publique).
-   Las claves compartidas son: manual, nivel, lluvia, humedad y compuerta.
+   Las claves compartidas son: modo, nivel, lluvia, humedad y compuerta.
    ========================================================================== */
 const nodo = {
   hayDatos: false,
@@ -139,11 +144,16 @@ const nodo = {
   retenida: false,                              // la última lectura es la que guardaba el broker
   nivel: null, lluvia: null, humedad: null,     // %
   riesgo: null,                                 // 'bajo' | 'medio' | 'alto'
-  manual: false,
+  modo: 'auto',                                 // 'auto' | 'manual' | 'ia'
+  manual: false,                                // atajo: modo === 'manual'
+  simulado: false,                              // usa valores del tablero (manual o crecida en modo IA)
+  decide: null,                                 // quién decidió el riesgo: reglas, manual, ia, respaldo, seguridad
+  riesgoReglas: null,                           // lo que dicen las reglas (en modo IA puede ser otro)
   compuerta: false,                             // true = abierta (90°)
   buzzer: 'apagado'                             // 'apagado' | 'intermitente' | 'sonando'
 };
-const orden = { manual: null, nivel: null, lluvia: null, humedad: null, compuerta: null };
+const orden = { modo: null, nivel: null, lluvia: null, humedad: null, compuerta: null,
+                simular: false };              // simular: en modo IA se mandan valores (crecida)
 const enlace = {
   broker: 'conectando',                         // 'conectando' | 'conectado' | 'sin'
   tConexion: 0,
@@ -186,6 +196,10 @@ function leerEstadoNodo(texto) {
   if (s === 'offline') return 'offline';
   return null;
 }
+function leerModo(v) {                          // el firmware manda auto, manual o ia
+  const s = String(v).toLowerCase();
+  return s === 'manual' || s === 'ia' ? s : 'auto';
+}
 const aPct = cm => limitar(cm / CONFIG.nivelMaxCm * 100, 0, 100);
 
 /* ============================================================================
@@ -208,7 +222,13 @@ function recibirDatos(d, retenido) {
   if (humedad !== null) nodo.humedad = limitar(humedad, 0, 100);
   if (nodo.nivel === null || nodo.lluvia === null || nodo.humedad === null) return;
   nodo.riesgo = leerRiesgo(d.riesgo);
-  nodo.manual = String(d.modo).toLowerCase() === 'manual';
+  nodo.modo = leerModo(d.modo);
+  nodo.manual = nodo.modo === 'manual';
+  // Campos del firmware con modo IA (uno anterior no los manda)
+  nodo.simulado = typeof d.simulado === 'boolean' ? d.simulado : nodo.manual;
+  nodo.decide = d.decide ? String(d.decide).toLowerCase() : null;
+  nodo.riesgoReglas = d.riesgo_reglas === undefined ? null : leerRiesgo(d.riesgo_reglas);
+  if (window.IA) window.IA.nodo({ modo: nodo.modo, decide: nodo.decide, simulado: nodo.simulado });
   nodo.compuerta = leerCompuerta(d.compuerta);
   nodo.buzzer = leerBuzzer(d.buzzer);
   const ahora = Date.now();
@@ -245,21 +265,22 @@ function recibirEstado(texto) {
 function recibirControl(c) {
   if (!c || typeof c !== 'object') return;
   const modo = String(c.modo).toLowerCase();
-  if (modo !== 'manual' && modo !== 'auto') return;          // el firmware también lo ignora
+  if (modo !== 'manual' && modo !== 'auto' && modo !== 'ia') return;   // el firmware también lo ignora
   const cambios = [];
   const poner = (clave, valor) => {
     const antes = orden[clave];
     const igual = typeof valor === 'number' && antes !== null ? Math.abs(antes - valor) < 0.01 : antes === valor;
     if (!igual) { orden[clave] = valor; cambios.push(clave); }
   };
-  poner('manual', modo === 'manual');
-  if (modo === 'manual') {
+  poner('modo', modo);
+  // Valores: en manual siempre; en IA sólo durante una crecida simulada
+  if (modo === 'manual' || modo === 'ia') {
     const cm = num(c.nivel_cm), lluvia = num(c.lluvia_pct), humedad = num(c.humedad_pct);
     if (cm !== null) poner('nivel', aPct(cm));
     if (lluvia !== null) poner('lluvia', limitar(lluvia, 0, 100));
     if (humedad !== null) poner('humedad', limitar(humedad, 0, 100));
-    if (c.compuerta !== undefined) poner('compuerta', leerCompuerta(c.compuerta));
   }
+  if (modo === 'manual' && c.compuerta !== undefined) poner('compuerta', leerCompuerta(c.compuerta));
   cambios.forEach(clave => { if (!confirmado(clave, orden[clave])) marcarPendiente(clave, orden[clave], false); });
   pintarControl();
 }
@@ -269,9 +290,9 @@ function recibirControl(c) {
    ========================================================================== */
 function confirmado(clave, valor) {
   if (!nodo.hayDatos) return false;
-  if (clave === 'manual') return nodo.manual === valor;
-  if (!nodo.manual) return false;                // lo demás sólo aplica en manual
-  if (clave === 'compuerta') return nodo.compuerta === valor;
+  if (clave === 'modo') return nodo.modo === valor;
+  if (clave === 'compuerta') return nodo.manual && nodo.compuerta === valor;   // el switch sólo vale en manual
+  if (!nodo.simulado) return false;              // los valores sólo aplican si el nodo usa los del tablero
   return Math.abs(nodo[clave] - valor) <= 0.5;
 }
 function marcarPendiente(clave, valor, local) {
@@ -293,7 +314,7 @@ function vencer(clave) {                         // el nodo no confirmó a tiemp
   if (!p || !p.local) return;
   // La orden quedó retenida en el broker. Se repone la que corresponde a lo que
   // el nodo reporta, para que no la aplique por sorpresa más tarde (en manual
-  // dejaría de atender a los sensores).
+  // o en IA dejaría de atender a los sensores o a las reglas).
   if (nodo.hayDatos) enviarControl();
   avisar('El nodo no confirmó el cambio');
 }
@@ -301,34 +322,35 @@ function vencer(clave) {                         // el nodo no confirmó a tiemp
 // así el siguiente comando parte del estado real y no de uno que nunca aplicó.
 function sincronizarOrden() {
   if (!nodo.hayDatos) return;
-  if (!pendientes.manual) orden.manual = nodo.manual;
-  if (!nodo.manual) return;
+  if (!pendientes.modo) orden.modo = nodo.modo;
+  if (!crecida.reloj) orden.simular = nodo.modo === 'ia' && nodo.simulado;
+  if (!nodo.simulado) return;
   LECTURAS.forEach(k => { if (!pendientes[k]) orden[k] = nodo[k]; });
-  if (!pendientes.compuerta) orden.compuerta = nodo.compuerta;
+  if (nodo.manual && !pendientes.compuerta) orden.compuerta = nodo.compuerta;
 }
 function completarOrden() {                      // valores que nunca se han ordenado: los actuales
   LECTURAS.forEach(k => { if (orden[k] === null) orden[k] = nodo[k] === null ? 0 : Math.round(nodo[k]); });
   if (orden.compuerta === null) orden.compuerta = nodo.compuerta;
 }
 // El mismo JSON que arma Node-RED ("armar comando"): en manual van todos los
-// valores juntos; en automático sólo el modo. QoS 1 y retenido.
+// valores juntos; en automático sólo el modo. En IA sólo el modo, o el modo con
+// los valores mientras se simula una crecida. QoS 1 y retenido.
 function enviarControl() {
   if (!CONFIG.controlHabilitado) return;         // solo lectura: nunca se publica
   const r1 = v => Math.round(v * 10) / 10;
-  const carga = orden.manual
-    ? { modo: 'manual',
-        nivel_cm: r1(orden.nivel * CONFIG.nivelMaxCm / 100),
-        lluvia_pct: r1(orden.lluvia),
-        humedad_pct: r1(orden.humedad),
-        compuerta: orden.compuerta ? 90 : 0 }
-    : { modo: 'auto' };
+  const valores = () => ({ nivel_cm: r1(orden.nivel * CONFIG.nivelMaxCm / 100),
+                           lluvia_pct: r1(orden.lluvia), humedad_pct: r1(orden.humedad) });
+  let carga = { modo: 'auto' };
+  if (orden.modo === 'manual') carga = Object.assign({ modo: 'manual' }, valores(), { compuerta: orden.compuerta ? 90 : 0 });
+  if (orden.modo === 'ia') carga = orden.simular ? Object.assign({ modo: 'ia' }, valores()) : { modo: 'ia' };
   transporte.publicar(CONFIG.topics.control, JSON.stringify(carga));
 }
 function ordenar(clave, valor) {
   if (!CONFIG.controlHabilitado) return;
   if (crecida.reloj) detenerCrecida('Simulación detenida: cambiaste un control');
   completarOrden();
-  if (clave !== 'manual') orden.manual = true;   // sliders y compuerta sólo se usan en manual
+  if (clave !== 'modo') orden.modo = 'manual';   // sliders y compuerta sólo se usan en manual
+  orden.simular = false;
   orden[clave] = valor;
   marcarPendiente(clave, valor, true);
   enviarControl();
@@ -338,8 +360,9 @@ function ordenar(clave, valor) {
 // Lo que enseña cada control: la orden mientras está pendiente; si no, el nodo
 function valorMostrado(clave) {
   if (pendientes[clave]) return pendientes[clave].valor;
-  if (clave === 'manual' || clave === 'compuerta') return nodo.hayDatos ? nodo[clave] : !!orden[clave];
-  if (nodo.hayDatos && nodo.manual) return nodo[clave];
+  if (clave === 'modo') return nodo.hayDatos ? nodo.modo : (orden.modo || 'auto');
+  if (clave === 'compuerta') return nodo.hayDatos ? nodo[clave] : !!orden[clave];
+  if (nodo.hayDatos && nodo.simulado) return nodo[clave];
   if (orden[clave] !== null) return orden[clave];
   return nodo.hayDatos ? nodo[clave] : null;
 }
@@ -420,11 +443,11 @@ function pintarConexion() {
   document.body.classList.toggle('con-franja', !!franja);
 
   // Tarjetas de datos: "Esperando" sin lecturas, "Última lectura" si el nodo
-  // no responde y "Simulado" en manual
+  // no responde y "Simulado" con valores del tablero
   const viejo = nodo.hayDatos && (est === 'offline' || est === 'desconocido');
   const TXT_CHIP = { esperando: 'Esperando', ultima: 'Última lectura', simulado: 'Simulado' };
   document.querySelectorAll('.dato').forEach(card => {
-    const simulado = nodo.hayDatos && nodo.manual && card.id !== 'cardEstado';
+    const simulado = nodo.hayDatos && nodo.simulado && card.id !== 'cardEstado';
     const tipo = !nodo.hayDatos ? 'esperando' : viejo ? 'ultima' : simulado ? 'simulado' : '';
     const chip = card.querySelector('[data-chip]');
     card.classList.toggle('viejo', viejo);
@@ -495,13 +518,27 @@ function pintarVariaciones() {
    ===== ESTADO: riesgo, modo, compuerta y buzzer que el nodo confirma =====
    ========================================================================== */
 const TXT_BUZZER = { apagado: 'Apagado', intermitente: 'Intermitente', sonando: 'Sonando' };
+const TXT_MODO = { auto: 'Automático', manual: 'Manual', ia: 'IA' };
+// Debajo del riesgo: de dónde salió (sólo en manual o en IA)
+function notaRiesgo() {
+  if (!nodo.hayDatos) return '';
+  if (nodo.modo === 'manual') return 'Calculado con valores simulados';
+  if (nodo.modo !== 'ia') return '';
+  const reglas = nodo.riesgoReglas && nodo.riesgoReglas !== nodo.riesgo ? ' · reglas: ' + nodo.riesgoReglas.toUpperCase() : '';
+  const sim = nodo.simulado ? ' · simulado' : '';
+  if (nodo.decide === 'respaldo') return 'Sin pronóstico: deciden las reglas' + sim;
+  if (nodo.decide === 'seguridad') return 'Límite de seguridad: más de 250 cm' + sim;
+  return 'Decidido por la IA' + reglas + sim;
+}
 function pintarEstado() {
   const hay = nodo.hayDatos;
   dom.riesgo.dataset.nivel = hay && nodo.riesgo ? nodo.riesgo : 'sin';
   dom.riesgoTxt.textContent = hay && nodo.riesgo ? nodo.riesgo.toUpperCase() : '—';
-  dom.riesgoNota.hidden = !(hay && nodo.manual);
-  dom.eModo.dataset.on = String(hay && nodo.manual);
-  dom.eModoTxt.textContent = hay ? (nodo.manual ? 'Manual' : 'Automático') : '—';
+  const nota = notaRiesgo();
+  dom.riesgoNota.hidden = !nota;
+  dom.riesgoNota.textContent = nota;
+  dom.eModo.dataset.modo = hay ? nodo.modo : 'sin';
+  dom.eModoTxt.textContent = hay ? TXT_MODO[nodo.modo] : '—';
   dom.eCompuerta.dataset.abierta = String(hay && nodo.compuerta);
   dom.eCompuertaTxt.textContent = hay ? (nodo.compuerta ? 'Abierta' : 'Cerrada') : '—';
   dom.eBuzzer.dataset.estado = hay ? nodo.buzzer : 'sin';
@@ -531,19 +568,29 @@ function ponerSlider(sl, v) {
 }
 function pintarControl() {
   const linea = enLinea();
-  const manual = nodo.hayDatos && nodo.manual;   // el modo que el nodo confirma
+  const modoNodo = nodo.hayDatos ? nodo.modo : null;   // el modo que el nodo confirma
+  const manual = modoNodo === 'manual';
   const bloqueado = !linea || !manual;
   const motivo = !linea ? 'El nodo no está en línea' : (!manual ? 'Activa el modo manual para simular' : '');
 
-  ponerSwitch(dom.swModo, valorMostrado('manual'), !linea, 'manual');
-  dom.swModo.title = linea ? '' : 'El nodo no está en línea';
+  const mostrado = valorMostrado('modo');
+  botonesModo.forEach(b => {
+    b.setAttribute('aria-pressed', String(mostrado === b.dataset.modo));
+    b.disabled = !linea;
+    b.classList.toggle('pendiente', !!pendientes.modo && pendientes.modo.valor === b.dataset.modo);
+  });
+  dom.selModo.title = linea ? '' : 'El nodo no está en línea';
   ponerSwitch(dom.swCompuerta, valorMostrado('compuerta'), bloqueado, 'compuerta');
   dom.ctlCompuerta.classList.toggle('bloqueado', bloqueado);
   dom.ctlCompuerta.title = motivo;
 
-  dom.btnCrecida.disabled = bloqueado;
-  dom.btnCrecida.title = motivo;
-  if (bloqueado && crecida.reloj) detenerCrecida(!linea ? 'Simulación detenida: el nodo no está en línea' : 'Simulación detenida: el nodo salió de modo manual');
+  // La crecida funciona en manual (deciden las reglas) y en IA (decide la IA)
+  const puedeCrecida = linea && (modoNodo === 'manual' || modoNodo === 'ia');
+  dom.btnCrecida.disabled = !puedeCrecida;
+  dom.btnCrecida.title = !linea ? 'El nodo no está en línea' : (!puedeCrecida ? 'Elige el modo Manual o IA para simular' : '');
+  if (crecida.reloj && (!puedeCrecida || modoNodo !== crecida.modo)) {
+    detenerCrecida(!linea ? 'Simulación detenida: el nodo no está en línea' : 'Simulación detenida: el nodo cambió de modo');
+  }
 
   sliders.forEach(sl => {
     if (bloqueado) soltar(sl);
@@ -559,18 +606,21 @@ function soltar(sl) {
   sl.el.classList.remove('arrastrando');
 }
 
-dom.swModo.addEventListener('click', () => { ordenar('manual', !valorMostrado('manual')); });
+botonesModo.forEach(b => b.addEventListener('click', () => {
+  if (valorMostrado('modo') !== b.dataset.modo) ordenar('modo', b.dataset.modo);
+}));
 
 // ===== SIMULAR CRECIDA =====
 // Primero llueve, luego se moja el suelo y al final sube el río, como en una tormenta.
 // Cada segundo se manda el mismo JSON de control que mandan los sliders.
-const crecida = { reloj: 0, paso: 0 };
+const crecida = { reloj: 0, paso: 0, modo: 'manual' };   // modo: manual o ia, el del nodo al empezar
 function pasoCrecida() {
   const c = CONFIG.crecida;
   const f = Math.max(0, crecida.paso - c.pasosQuieto) / (c.pasos - c.pasosQuieto);   // 0 → 1
   const hacia = (clave, rapidez) => c.calma[clave] + (c.meta[clave] - c.calma[clave]) * Math.min(1, f * rapidez);
   completarOrden();
-  orden.manual = true;
+  orden.modo = crecida.modo;
+  orden.simular = crecida.modo === 'ia';
   orden.lluvia = Math.round(hacia('lluvia', 2.5));
   orden.humedad = Math.round(hacia('humedad', 1.6));
   orden.nivel = Math.round(f < 0.2 ? c.calma.nivel : c.calma.nivel + (c.meta.nivel - c.calma.nivel) * (f - 0.2) / 0.8);
@@ -582,17 +632,28 @@ function pasoCrecida() {
 }
 function iniciarCrecida() {
   crecida.paso = 0;
+  crecida.modo = nodo.modo === 'ia' ? 'ia' : 'manual';
   dom.btnCrecida.setAttribute('aria-pressed', 'true');
   dom.btnCrecidaTxt.textContent = 'Detener simulación';
   pasoCrecida();
   crecida.reloj = setInterval(pasoCrecida, 1000);
-  avisar('Crecida simulada: mira el pronóstico de la IA');
+  avisar(crecida.modo === 'ia' ? 'Crecida simulada: la IA decide la compuerta' : 'Crecida simulada: mira el pronóstico de la IA');
 }
+// En modo IA, al terminar la crecida el nodo vuelve a sus sensores (la IA sigue
+// decidiendo). En manual se quedan los últimos valores, como con los sliders.
 function detenerCrecida(motivo) {
   clearInterval(crecida.reloj);
   crecida.reloj = 0;
   dom.btnCrecida.setAttribute('aria-pressed', 'false');
   dom.btnCrecidaTxt.textContent = 'Simular crecida';
+  if (orden.simular) {
+    orden.simular = false;
+    LECTURAS.forEach(k => { if (pendientes[k]) { clearTimeout(pendientes[k].reloj); delete pendientes[k]; } });
+    if (orden.modo === 'ia') {
+      enviarControl();
+      if (motivo) motivo += ': la IA vuelve a los sensores';
+    }
+  }
   if (motivo) avisar(motivo);
 }
 dom.btnCrecida.addEventListener('click', () => {
@@ -992,13 +1053,18 @@ function conectarMqtt(cfg) {
 /* ============================================================================
    ===== MODO DEMO (?demo=1) =====
    Un nodo falso dentro de la página, sin broker: publica el mismo JSON que el
-   firmware, aplica sus mismas reglas de riesgo y obedece al tópico de control.
+   firmware, aplica sus mismas reglas de riesgo y obedece al tópico de control,
+   con los tres modos (en modo IA usa el pronóstico de la IA falsa, con el
+   respaldo de 5 s y el límite de seguridad del firmware).
    Sirve para revisar el diseño con el nodo apagado. Con ?demo=offline el nodo
-   falso se cae a los pocos segundos, para ver ese estado.
+   falso se cae a los pocos segundos, para ver ese estado, y con ?demo=sinia
+   no hay IA (en modo IA se ve el respaldo de las reglas).
    ========================================================================== */
 function iniciarDemo(variante) {
   const T = CONFIG.topics, U = CONFIG.umbrales;
-  const man = { activo: false, nivel: 0, lluvia: 0, humedad: 0, compuerta: false };
+  const man = { modo: 'auto', simular: false, nivel: 0, lluvia: 0, humedad: 0, compuerta: false };
+  const iaDemo = { riesgo: 0, t: 0 };            // último pronóstico de la IA falsa
+  const gate = { abierta: false, tAlto: 0 };     // compuerta con la histéresis del firmware
   const sensores = t => {                        // curvas lentas que recorren los tres riesgos
     const m = t / 60000;
     return {
@@ -1016,14 +1082,26 @@ function iniciarDemo(variante) {
   };
   const r1 = v => Math.round(v * 10) / 10;
   const lectura = t => {
-    const s = man.activo ? man : sensores(t), r = riesgo(s);
-    const abierta = man.activo ? man.compuerta : r === 2;
+    const simulado = man.modo === 'manual' || (man.modo === 'ia' && man.simular);
+    const s = simulado ? man : sensores(t), reglas = riesgo(s);
+    let r = reglas, decide = man.modo === 'manual' ? 'manual' : 'reglas';
+    if (man.modo === 'ia') {
+      if (Date.now() - iaDemo.t < 5000) { r = iaDemo.riesgo; decide = 'ia'; } else decide = 'respaldo';
+      if (s.nivel > U.nivelAlto && r < 2) { r = 2; decide = 'seguridad'; }
+    }
+    if (man.modo === 'manual') gate.abierta = man.compuerta;
+    else {
+      if (r === 2) { gate.abierta = true; gate.tAlto = t; }
+      const espera = man.modo === 'ia' && t - gate.tAlto < 15000;
+      if (r !== 2 && s.nivel < U.nivelMedio && !espera) gate.abierta = false;
+    }
     return {
       distancia_cm: r1(13.7 - sensores(t).nivel / 100 * 5),
       nivel_cm: r1(s.nivel * CONFIG.nivelMaxCm / 100), lluvia_pct: r1(s.lluvia), humedad_pct: r1(s.humedad),
       riesgo: r, led: ['verde', 'amarillo', 'rojo'][r], buzzer: ['apagado', 'intermitente', 'continuo'][r],
-      compuerta: abierta ? 90 : 0,
-      modo: man.activo ? 'manual' : 'auto', compuerta_modo: man.activo ? 'manual' : 'auto'
+      compuerta: gate.abierta ? 90 : 0,
+      modo: man.modo, compuerta_modo: man.modo,
+      decide: decide, riesgo_reglas: reglas, simulado: simulado
     };
   };
 
@@ -1041,11 +1119,12 @@ function iniciarDemo(variante) {
     if (topic !== T.control) return;
     setTimeout(() => {
       const c = leerJSON(texto) || {};
-      man.activo = c.modo === 'manual';
-      if (man.activo) {
+      man.modo = c.modo === 'manual' || c.modo === 'ia' ? c.modo : 'auto';
+      man.simular = c.modo === 'ia' && c.nivel_cm !== undefined;
+      if (c.modo === 'manual' || man.simular) {
         man.nivel = aPct(c.nivel_cm); man.lluvia = c.lluvia_pct; man.humedad = c.humedad_pct;
-        man.compuerta = c.compuerta >= 45;
       }
+      if (c.modo === 'manual') man.compuerta = c.compuerta >= 45;
       alLlegar(T.control, texto);                // el broker lo reenvía a quien esté suscrito
     }, 80);
   };
@@ -1058,8 +1137,8 @@ function iniciarDemo(variante) {
   const pasados = [];
   const iaFalsa = d => {
     const nivel = d.nivel_cm / CONFIG.nivelMaxCm * 100;
-    pasados.push({ nivel: nivel, modo: d.modo });
-    if (pasados.length > 11 || pasados[0].modo !== d.modo) pasados.splice(0, pasados.length - 1);
+    pasados.push({ nivel: nivel, fuente: d.simulado });
+    if (pasados.length > 11 || pasados[0].fuente !== d.simulado) pasados.splice(0, pasados.length - 1);
     const pendiente = (nivel - pasados[0].nivel) / Math.max(1, pasados.length - 1);
     const futuro = { nivel: limitar(nivel + pendiente * 15, 0, 100), lluvia: d.lluvia_pct, humedad: d.humedad_pct };
     const c = riesgo(futuro);
@@ -1071,7 +1150,11 @@ function iniciarDemo(variante) {
   const ciclo = setInterval(() => {
     const d = lectura(Date.now());
     alLlegar(T.datos, JSON.stringify(d));
-    alLlegar(T.ia, JSON.stringify(iaFalsa(d)));
+    const p = iaFalsa(d);
+    if (variante === 'sinia') return;            // sin IA: para ver el respaldo de las reglas
+    iaDemo.riesgo = p.riesgo_15s;
+    iaDemo.t = Date.now();
+    alLlegar(T.ia, JSON.stringify(p));
   }, CONFIG.msPublicacion);
   if (variante === 'offline') setTimeout(() => { clearInterval(ciclo); alLlegar(T.estado, 'offline'); }, 2500);
 }
@@ -1085,9 +1168,9 @@ if (!CONFIG.controlHabilitado) {
   $('chipSoloLectura').hidden = false;
 }
 
-// Sólo ?demo=1 o ?demo=offline activan el nodo falso
+// Sólo ?demo=1, ?demo=offline o ?demo=sinia (sin IA) activan el nodo falso
 const parametroDemo = new URLSearchParams(location.search).get('demo');
-const demo = parametroDemo === '1' || parametroDemo === 'offline' ? parametroDemo : null;
+const demo = ['1', 'offline', 'sinia'].indexOf(parametroDemo) >= 0 ? parametroDemo : null;
 if (!demo) cargarHistorial();
 crearGraficas();
 pintarEstado();

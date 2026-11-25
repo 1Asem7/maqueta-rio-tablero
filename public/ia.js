@@ -6,10 +6,12 @@
    (ia/Proyecto_IA_Nodo_Rio.ipynb, sección 9). El cuaderno escucha el tópico de
    datos, predice con el modelo entrenado y publica en ucol-eq1/rio/nodo1/ia:
      {"riesgo_15s":0|1|2, "prob":[bajo,medio,alto], "riesgo_ahora":0|1|2,
-      "modo":"auto"|"manual", "horizonte_s":15, "modelo":"XGBoost", "t":<s>}
-   Esta tarjeta sólo lo muestra. La IA no mueve la compuerta ni el buzzer:
-   la alerta real sigue en el firmware.
-   app.js llama a IA.recibir() con cada mensaje de ese tópico.
+      "modo":"auto"|"manual"|"ia", "horizonte_s":15, "modelo":"XGBoost", "t":<s>}
+   Esta tarjeta lo muestra. En modo IA el ESP32 usa ese pronóstico para el LED,
+   el buzzer y la compuerta (con respaldo de las reglas si deja de llegar); en
+   los otros modos la IA sólo avisa.
+   app.js llama a IA.recibir() con cada mensaje de ese tópico y a IA.nodo()
+   con el modo y quién decide, que vienen en el tópico de datos.
    ========================================================================== */
 
 const CONFIG = {
@@ -26,6 +28,7 @@ const CLASES = ['bajo', 'medio', 'alto'];
 let ultimo = null;               // último pronóstico recibido
 let tUltimo = 0;
 let negado = false;              // el broker no deja leer el tópico de la IA
+let estadoNodo = { modo: 'auto', decide: null, simulado: false };   // lo manda app.js
 
 function clase(v) {
   const n = Number(v);
@@ -43,7 +46,7 @@ function recibir(d) {
     clase: c,
     prob: prob,
     ahora: clase(d.riesgo_ahora),
-    manual: String(d.modo).toLowerCase() === 'manual',
+    simulado: String(d.modo).toLowerCase() === 'manual',
     horizonte: Number(d.horizonte_s) || 15,
     modelo: d.modelo ? String(d.modelo) : 'IA'
   };
@@ -55,7 +58,12 @@ function recibir(d) {
 // ===== TARJETA =====
 function pintar() {
   const vivo = ultimo && Date.now() - tUltimo < CONFIG.msSinDatos;
-  dom.origen.hidden = !vivo;
+  const alMando = estadoNodo.modo === 'ia';
+  dom.origen.hidden = !vivo && !alMando;
+  if (!vivo && alMando) {        // el nodo está en modo IA pero no le llegan pronósticos
+    dom.origen.textContent = 'Respaldo';
+    dom.origen.dataset.tipo = 'respaldo';
+  }
   if (!vivo) {
     dom.ia.dataset.nivel = 'sin';
     dom.ia.dataset.anticipa = 'false';
@@ -64,6 +72,7 @@ function pintar() {
     dom.valores.forEach(v => { v.textContent = '–'; });
     dom.prob.textContent = '\u00a0';
     if (negado) dom.nota.textContent = 'El broker no deja leer el tópico de la IA: revisa su ACL';
+    else if (alMando) dom.nota.textContent = 'Modo IA sin pronóstico: deciden las reglas. Revisa el cuaderno de Colab';
     else if (ultimo) dom.nota.textContent = 'La IA dejó de publicar: revisa el cuaderno de Colab';
     else dom.nota.textContent = 'Esperando a la IA: ejecuta la sección 9 del cuaderno de Colab';
     return;
@@ -76,16 +85,21 @@ function pintar() {
   dom.valores.forEach((v, i) => { v.textContent = Math.round(ultimo.prob[i] * 100) + ' %'; });
   // En pantallas bajas no hay barras: sólo esta línea
   dom.prob.textContent = 'Probabilidad de ALTO: ' + Math.round(ultimo.prob[2] * 100) + ' %';
-  dom.origen.textContent = ultimo.manual ? 'Manual' : 'Sensores';
-  dom.origen.dataset.tipo = ultimo.manual ? 'manual' : 'sensores';
+  const simulado = ultimo.simulado || estadoNodo.simulado;
+  dom.origen.textContent = alMando ? 'Al mando' : (simulado ? 'Simulado' : 'Sensores');
+  dom.origen.dataset.tipo = alMando ? 'mando' : (simulado ? 'manual' : 'sensores');
 
   const anticipa = ultimo.ahora !== null && ultimo.clase > ultimo.ahora;
   dom.ia.dataset.anticipa = String(anticipa);
   if (anticipa) {
     dom.nota.textContent = 'Alerta anticipada: ahora es ' + CLASES[ultimo.ahora].toUpperCase() +
-      ' y la IA espera ' + nombre.toUpperCase();
+      ' y la IA espera ' + nombre.toUpperCase() + (alMando && ultimo.clase === 2 ? ' · abre la compuerta' : '');
+  } else if (alMando && estadoNodo.decide === 'seguridad') {
+    dom.nota.textContent = 'Límite de seguridad: el nivel pasa de 250 cm';
+  } else if (alMando) {
+    dom.nota.textContent = ultimo.modelo + ' decide LED, buzzer y compuerta';
   } else {
-    dom.nota.textContent = ultimo.modelo + (ultimo.manual ? ' · con los valores manuales' : ' · con los sensores');
+    dom.nota.textContent = ultimo.modelo + ' solo avisa' + (simulado ? ' · con valores simulados' : ' · con los sensores');
   }
 }
 
@@ -94,6 +108,7 @@ pintar();
 
 window.IA = {
   recibir: recibir,
-  negado: () => { negado = true; pintar(); }
+  negado: () => { negado = true; pintar(); },
+  nodo: info => { estadoNodo = info; pintar(); }
 };
 })();

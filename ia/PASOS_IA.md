@@ -1,107 +1,95 @@
-# Pasos para poner la IA en vivo
+# Pasos para poner la IA en vivo (con modo IA)
 
-Hay tres partes: un permiso en Mosquitto (una línea), publicar el tablero y correr el cuaderno en Colab.
+El nodo tiene 3 modos, que se eligen en el tablero (maquetaiot) o en Node-RED:
 
-## 1. Permiso en Mosquitto (en el servidor Debian)
+| Modo | Datos | Quién decide el riesgo | Compuerta |
+|---|---|---|---|
+| **Automático** | Sensores | Reglas del ESP32 | Abre en ALTO |
+| **Manual** | Sliders del tablero | Reglas del ESP32 | La mueve el switch |
+| **IA** | Sensores (o *Simular crecida*) | Modelo de Colab (XGBoost) | Abre si la IA dice ALTO |
 
-El cuaderno de Colab entra al broker con el usuario `maquetaweb` (el mismo de la página). Hoy ese usuario sólo puede leer `datos` y `estado`, y leer y escribir en `control`. Le falta poder **publicar** y **leer** en el tópico nuevo `ucol-eq1/rio/nodo1/ia`.
+En modo IA el ESP32 tiene dos protecciones:
+- Si no llega un pronóstico en 5 s (Colab apagado o sin internet), deciden las reglas (respaldo).
+- Si el nivel pasa de 250 cm, el riesgo es ALTO aunque la IA diga otra cosa (seguridad).
 
-**1.1 Entrar al servidor** (desde PowerShell en tu PC):
+Además, en modo IA la compuerta se queda abierta al menos 15 s desde el último ALTO, para que no abra y cierre si la IA cambia de opinión.
 
-```powershell
-ssh asem17@server
-```
-Abre una terminal en el servidor por Tailscale. Si `server` no resuelve, usa `ssh asem17@192.168.100.150` estando en tu red de casa. Debe aparecer el prompt `asem17@server:~$`.
+## 1. Permiso en Mosquitto (servidor Debian)
 
-**1.2 Ubicar el archivo de permisos (ACL):**
-
-```bash
-grep -R "acl_file" /etc/mosquitto/
-```
-Busca en la configuración de Mosquitto la línea que dice dónde está el archivo de permisos. Verás algo como `/etc/mosquitto/conf.d/xxx.conf:acl_file /etc/mosquitto/acl`. Lo que va después de `acl_file` es la ruta. En los comandos de abajo, cambia `/etc/mosquitto/acl` por tu ruta si es distinta.
-
-**1.3 Hacer un respaldo:**
+`maquetaweb` ya tiene `topic readwrite ucol-eq1/rio/nodo1/ia` (hecho el 25 nov). Falta que el **ESP32** pueda leer el pronóstico:
 
 ```bash
 sudo cp /etc/mosquitto/acl /etc/mosquitto/acl.respaldo
-```
-Copia el archivo tal como está, por si hay que regresar. No muestra nada si sale bien.
-
-**1.4 Agregar el permiso:**
-
-```bash
 sudo nano /etc/mosquitto/acl
 ```
-Abre el archivo en el editor. Busca el bloque que empieza con `user maquetaweb` y agrega esta línea debajo de las que ya tiene:
-
-```
-topic readwrite ucol-eq1/rio/nodo1/ia
-```
-Y en el bloque `user nodered` agrega (para que Node-RED muestre el pronóstico):
-
+Debajo de `topic read ucol-eq1/rio/nodo1/control` (bloque `user esp32`) agrega:
 ```
 topic read ucol-eq1/rio/nodo1/ia
 ```
-Guarda con `Ctrl+O`, `Enter`, y sal con `Ctrl+X`. No cambies las demás líneas (las de `esp32` y `nodered` se quedan igual).
-
-**1.5 Recargar Mosquitto:**
-
+Guarda (`Ctrl+O`, Enter, `Ctrl+X`) y recarga:
 ```bash
 sudo systemctl reload mosquitto
 systemctl status mosquitto --no-pager
 ```
-El primero hace que Mosquitto vuelva a leer los permisos sin desconectar al ESP32. El segundo debe decir `active (running)` en verde. Si dice `failed`, regresa el respaldo con `sudo cp /etc/mosquitto/acl.respaldo /etc/mosquitto/acl` y vuelve a recargar.
+Debe decir `active (running)`. Si dice `failed`: `sudo cp /etc/mosquitto/acl.respaldo /etc/mosquitto/acl` y recarga otra vez.
 
-> **Ojo:** la clave de `maquetaweb` ya es pública (está en `public/app.js` y el repositorio es público). Con este permiso, alguien con esa clave podría publicar un pronóstico falso en la tarjeta de la IA. No puede tocar la compuerta más de lo que ya podía. Si quieres más seguridad, crea un usuario aparte sólo para Colab (`sudo mosquitto_passwd /ruta/del/password_file colabia`) con `topic read ucol-eq1/rio/nodo1/datos` y `topic write ucol-eq1/rio/nodo1/ia`, deja `maquetaweb` sólo con `topic read ucol-eq1/rio/nodo1/ia` y cambia `USUARIO = 'colabia'` en la celda 9.1 del cuaderno.
+Sin este permiso el ESP32 en modo IA nunca recibe pronósticos y se queda en "respaldo" (deciden las reglas).
 
-## 2. Publicar el tablero
+`nodered` no necesita cambios: su `readwrite ucol-eq1/rio/#` ya cubre `ia`.
 
-Los cambios están en la rama `ia-colab` de `C:\Users\MANEP\MaquetaRio\maqueta-rio-tablero` (todavía sin subir). En PowerShell:
+## 2. Firmware del ESP32
+
+El `main.cpp` nuevo ya está en `Practica_x.2\src\main.cpp` (el anterior quedó en `respaldo\main_antes_modo_ia.cpp`). Compila y sube desde PowerShell, en la carpeta del proyecto:
 
 ```powershell
-cd C:\Users\MANEP\MaquetaRio\maqueta-rio-tablero
-git push -u origin ia-colab
+cd "C:\Users\MANEP\OneDrive\Documentos\PlatformIO\Projects\Practica_x.2"
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run
 ```
-Sube la rama a GitHub. Luego, en github.com/1Asem7/maqueta-rio-tablero, abre el Pull Request de `ia-colab` y dale **Merge**. HubDeploy despliega `main`: si no se redespliega solo, lanza un deploy desde hub.eparedes.dev. En la página aparece la tarjeta **Pronóstico IA** debajo de Lluvia y humedad, con el texto "Esperando a la IA".
+Debe terminar en `[SUCCESS]`. Luego, con la placa conectada:
+```powershell
+& "$env:USERPROFILE\.platformio\penv\Scripts\pio.exe" run -t upload
+```
+Cuando salga `Connecting....`, mantén BOOT, toca EN y suelta BOOT cuando empiece `Writing at ...`. Al final toca EN.
 
-Para revisarla antes, sin el nodo: `npm start` y abre `http://localhost:3000/?demo=1`.
+En el monitor serie (`pio device monitor`) verás `>>> Modo IA: ...` al elegir el modo IA y `>>> IA: llegan pronosticos, decide el modelo` cuando Colab publica.
 
-## 2b. Tarjeta de la IA en Node-RED
+## 3. Tablero (maquetaiot)
 
-El flujo está en `ia/node-red_pronostico_ia.json`. Ya trae los IDs de tu pestaña "Nodo rio" y de tu broker "Mosquitto local (nodered)", así que no hay que configurar nada más.
+Los cambios están en la rama `modo-ia`. Abre el Pull Request en GitHub, dale **Merge** y espera el deploy de HubDeploy (o lánzalo desde hub.eparedes.dev). Recarga con `Ctrl+Shift+R`.
 
-1. Abre `https://rio.eparedes.dev` (el editor de Node-RED, no `/ui`) y entra a la pestaña **Nodo rio (wss)**.
-2. Menú ☰ (arriba a la derecha) → **Import** → **select a file to import** → elige `node-red_pronostico_ia.json` → **Import**. Suelta los nodos en un espacio libre.
-3. Si aparece "Some nodes already exist", elige **Import copy** únicamente si se duplicó algo tuyo. Lo normal es que no aparezca.
-4. Presiona **Deploy**.
-5. En `https://rio.eparedes.dev/ui` aparece una tarjeta nueva, **Pronóstico IA**, debajo de Estado, con "Esperando". Cuando corra Colab cambia cada segundo.
+En **Control** aparece el selector **Auto / Manual / IA**. Para revisarlo sin el nodo: `npm start` y abre `http://localhost:3000/?demo=1` (o `?demo=sinia` para ver el respaldo sin IA).
 
-Si la tarjeta se queda en "Esperando" mientras Colab sí publica, falta la línea `topic read ucol-eq1/rio/nodo1/ia` de `nodered` (paso 1.4).
+## 4. Node-RED
 
-## 3. Correr la IA en Colab
+Importa `ia/node-red_pronostico_ia.json` en el editor (`https://rio.eparedes.dev`, pestaña **Nodo rio (wss)**): menú ☰ → **Import** → elige el archivo → **Import** → **Deploy**.
 
-1. Abre `ia/Proyecto_IA_Nodo_Rio.ipynb` en Google Colab (Archivo → Subir cuaderno, o desde tu Drive).
-2. **Entorno de ejecución → Ejecutar todas** (tarda unos 2 minutos). Entrena los modelos y deja todo listo. La sección 9.3 dice `CONECTAR = False`.
-3. En la celda **9.1** cambia `CONECTAR = False` por `CONECTAR = True` y ejecútala. Te pide la clave de `maquetaweb`; escríbela y presiona Enter (no se guarda en el cuaderno).
-4. Ejecuta la celda **9.3**. Debe decir `Conectado al broker` y, cada 5 s, las últimas predicciones. Se queda escuchando 30 minutos (`MINUTOS` en la 9.1). Para detenerla usa el botón de detener de la celda.
-5. Abre maquetaiot.eparedes.dev: la tarjeta **Pronóstico IA** se llena cada segundo.
+El archivo usa los IDs de tu flujo del servidor (pestaña `83b62bfcec6df08a`, broker `4f9f99e7d18c27fc`), así que se conecta con el mismo usuario `nodered` y no cambia ningún nodo que ya tenías: solo agrega 12 nodos.
 
-Deja la pestaña de Colab abierta durante la demostración: si se queda inactiva mucho tiempo, Colab la desconecta.
+Agrega en `/ui` la tarjeta **Pronóstico IA** con el modo del nodo, quién decide, y dos botones: **Modo IA** y **Modo automático**. El modo manual se sigue usando con el switch de "Control manual". El texto "Modo:" del grupo Estado sigue diciendo AUTOMATICO cuando el nodo está en IA (ese nodo no se tocó); el modo real lo dice la tarjeta Pronóstico IA.
 
-## 4. Demostración
+## 5. Colab
 
-1. En el tablero (o en Node-RED) pasa el nodo a **Manual**.
-2. Presiona **Simular crecida** (abajo de Control). En 45 s llueve, se moja el suelo y sube el río hasta 90 %.
-3. Mira la tarjeta **Pronóstico IA**: marca **ALTO** unos 10 s antes que el riesgo de las reglas, con el aviso "Alerta anticipada".
-4. Al terminar, regresa el modo a **Automático** para que el control retenido quede en `{"modo":"auto"}`.
+Abre el cuaderno nuevo desde tu Drive: **Proyecto_IA_Nodo_Rio.ipynb** (el anterior quedó como "Proyecto_IA_Nodo_Rio (anterior, sin modo IA)").
 
-Con el nodo en automático, la IA predice con los sensores reales. La sección 9.4 guarda esas lecturas en `lecturas_reales.csv`. Si las subes a Colab y quitas los `#` de la celda de la sección 2.3, se puede volver a entrenar con datos de la maqueta.
+1. **Entorno de ejecución → Ejecutar todas** con `CONECTAR = False`.
+2. En la celda **9.1** pon `CONECTAR = True`, ejecútala y escribe la clave de `maquetaweb`.
+3. Ejecuta la **9.3**: debe decir `Conectado al broker` y mostrar las predicciones con la columna **decide**.
+
+## 6. Demostración
+
+1. Con el nodo encendido y Colab corriendo (9.3), elige **IA** en el tablero.
+2. La tarjeta Pronóstico IA dice **Al mando** y la nota bajo el riesgo dice **Decidido por la IA**.
+3. Presiona **Simular crecida**: la IA marca ALTO y la compuerta abre antes de que las reglas lleguen a ALTO (la nota muestra "reglas: MEDIO").
+4. Al terminar la crecida el nodo vuelve a sus sensores, sigue en modo IA.
+5. Para mostrar el respaldo: detén la celda 9.3. A los 5 s la nota dice **Sin pronóstico: deciden las reglas**.
+6. Al final regresa a **Auto** para que el control retenido quede en `{"modo":"auto"}`.
 
 ## Si algo falla
 
 | Lo que se ve | Causa probable |
 |---|---|
+| En modo IA siempre "Sin pronóstico: deciden las reglas" aunque Colab publica | Falta el permiso del paso 1 para `esp32` |
+| Al elegir IA sale "El nodo no confirmó el cambio" | El ESP32 tiene el firmware anterior (paso 2) |
 | Colab: `El broker rechazo la conexion` | Clave mal escrita en la 9.1 |
-| Colab conecta, pero "Predicciones publicadas: 0" | El nodo está apagado o no está publicando |
-| La tarjeta sigue en "Esperando a la IA" mientras Colab publica | Falta el paso 1 (Mosquitto descarta sin avisar la publicación de un tópico sin permiso) |
-| "La IA dejó de publicar" | Se detuvo la celda 9.3 o Colab se desconectó: vuelve a ejecutar 9.1 y 9.3 |
+| Colab conecta pero "Predicciones publicadas: 0" | El nodo está apagado o no publica |
+| La tarjeta dice "La IA dejó de publicar" | Se detuvo la 9.3 o Colab se desconectó: vuelve a ejecutar 9.1 y 9.3 |
